@@ -10,11 +10,14 @@
 #   buf_nfa.h       Thompson construction (AST->NFA) -> tests/t_nfa.c
 #   buf_dfa.h       subset construction (NFA->DFA)   -> tests/t_dfa.c
 #
+# buf_emit.h (DFA -> GlobalVar tables + buf_next) is comptime-VM only -- it
+# uses cccc's reflection builtins, so no host test includes it.
+#
 # t_dfa also links runtime/buf_rt.c and drives the real buf_run over the
-# freshly built tables. The `spec` target runs the whole comptime front half
-# over examples/calc.l; `check` invokes it but skips it with a notice when
-# cccc is not on PATH. The `generated` and `native` parity targets arrive at
-# M4 once the emitter exists.
+# freshly built tables. The `spec` target runs the full comptime pipeline over
+# both reference specs; `check` invokes it but skips it with a notice when
+# cccc is not on PATH. `bench` is the M3 per-phase cost measurement. The
+# `generated` and `native` parity targets arrive at M4.
 
 CC     ?= cc
 CFLAGS ?= -O2 -Wall
@@ -25,7 +28,7 @@ RT_HDRS  := runtime/buf_rt.h
 CT_HDRS  := include/buffalo/buf_rx.h include/buffalo/buf_tokcheck.h \
             include/buffalo/buf_nfa.h include/buffalo/buf_dfa.h
 
-.PHONY: all check test spec clean
+.PHONY: all check test spec bench clean
 .PRECIOUS: build/digits
 
 all: build/digits
@@ -65,14 +68,20 @@ check: build/digits test
 	    && $(MAKE) --no-print-directory spec \
 	    || echo "skip spec (no cccc on PATH)"
 
-# Run the comptime front half over both reference specs. Needs cccc on PATH
-# (or $CCCC). At M2 it reads the spec, validates the token header, and builds
-# the NFA then the DFA inside the comptime VM; emission (a populated .gen.c)
-# arrives at M4. clike.l is the ~40-rule stress case -- keep it here so a
-# comptime regression on the big spec is caught by `make check`, not at M3.
+# Run the full comptime pipeline over both reference specs. Needs cccc on PATH
+# (or $CCCC): it reads the spec, validates the token header, builds the NFA
+# then the DFA, and emits the four tables + the buf_next wrapper into the
+# .gen.c. clike.l is the ~40-rule stress case -- keep it here so a comptime
+# regression on the big spec is caught by `make check`.
 spec: | build
 	@bin/buffalo lex examples/calc.l  -o build/calc.l.gen.c  && echo "ok   spec calc"
 	@bin/buffalo lex examples/clike.l -o build/clike.l.gen.c && echo "ok   spec clike"
+
+# M3 spike: per-phase comptime cost of the pipeline (the BUF_STOP_AFTER
+# ablation ladder in src/buf_comptime.c). Needs cccc + perl. Not part of
+# `check` -- it is slow. See docs/performance.md.
+bench:
+	@tests/bench.sh
 
 clean:
 	rm -rf build examples/*.gen.c

@@ -48,40 +48,64 @@ Both must produce byte-identical program output.
   matcher; `t_dfa.c` also asserts the class count for a `clike.l`-sized spec is
   far below 256.
 
-### M3 — spike (go / no-go)
+### M3 — spike (go / no-go) — **done, GO**
 
-Run M1–M2 **plus a minimal emit step** (create the four `GlobalVar` tables, set
-their raw init data, emit the `buf_next` wrapper fn) inside the comptime VM for a
-~25-rule `clike.l` (identifiers, int/float/string literals, ~20 operators, `//`
-and `/* */` comments). Measure:
+Ran M1–M2 **plus a minimal emit step** (`include/buffalo/buf_emit.h`: four
+`GlobalVar` tables + raw `GlobalVarSetInitData` blobs + the `Quote()`d
+`buf_next` wrapper) inside the comptime VM for the ~40-rule `examples/clike.l`.
+Full method and numbers in [docs/performance.md](../docs/performance.md);
+`src/buf_comptime.c`'s `-D BUF_STOP_AFTER` ladder + `tests/bench.sh` reproduce
+it (`make bench`).
 
-- added compile time vs. a no-op comptime baseline;
-- peak arena use — are the starting sizes below enough for a real lexer?
-- generated-file size (~150–250 DFA states; with classes, ~4–10 KB of tables
-  vs. ~100 KB unclassed).
+Result (aarch64-darwin, cccc 0.1.0, `-O2`; measured on `clike.l` — 45 rules,
+85 DFA states — and `examples/big.l`, a deliberately oversized 103-rule /
+324-state fixture added for the spike):
 
-Emission is at least as likely to be the wall as construction. `GlobalVar` +
-raw `GlobalVarSetInitData` (a `memcpy`, not thousands of literal nodes) should
-make it cheap; M3 must prove that, not assume it. **Gate before M4.**
+- **added compile time for `clike.l`, emit included: ~0.38 s** over a ~0.31 s
+  no-op comptime baseline. Gate was < 1 s → **GO**. `big.l`: ~2.25 s — a
+  lexer that size wants Phase 1.5's DFA minimisation first, but M4's targets
+  (`calc`, `clike`) are well inside the gate.
+- **emission is free** at every size — raw init-data blobs + one wrapper fn,
+  lost in the noise. The `GlobalVar` + `memcpy` bet paid off.
+- the entire cost is the **DFA construction phase**, and it is cccc-VM
+  interpretation overhead (~1000–1300× vs. native `cc`), superlinear in DFA
+  state count. The first measurement was ~3× worse; **M3 reworked two spots in
+  `buf_dfa.h`** — `buf_dfa_find` (linear scan → FNV-1a hash index) and
+  `buf_dfa_closure` (per-call `mark[]` clear → generation counter; full
+  `0..N_nfa` collect → insertion sort of the closure) — for ~6× on `big.l`.
+  Determinism is unchanged and regression-tested on `big.l` in `t_dfa.c`.
+- **arena peaks**: everything 6–140× inside its cap except `big.l`'s 103 / 128
+  rules — `BUF_RX_MAX_RULES` should rise before Phase 2 (Phase 1.5). Caps stay
+  generous otherwise: `static` arrays, compile time tracks the live counts.
 
-Starting arena sizes (tune after the spike):
+| Arena | Cap | `clike.l` | `big.l` |
+|---|---|---|---|
+| rules | 128 | 45 | 103 |
+| regex AST nodes | 4096 | 162 | 739 |
+| NFA states | 8192 | 306 | 1077 |
+| DFA states | 4096 | 85 | 324 |
+| equivalence classes | 256 (typically 20–40) | 43 | 76 |
+| transition table | 262144 | 3655 | 24624 |
+| state-set pool | 65536 | 477 | 2157 |
 
-| Arena | Size |
-|---|---|
-| rules | 128 |
-| regex AST nodes | 4096 |
-| NFA states | 8192 |
-| DFA states | 4096 |
-| equivalence classes | 256 worst case (typically 20–40) |
+- **generated-file size**: `calc.l` 2.2 KB, `clike.l` 16.8 KB, `big.l` 100 KB.
+  cccc serialises each table blob as a C string literal; the escaped text is
+  ~2× the raw table bytes (~7.6 KB for `clike.l`), and the file scales with
+  `nstates·nclass` (mostly the `next` table).
 
 ### M4 — the emitter
 
-- `include/buffalo/buf_emit.h` — DFA → four file-scope `static const` tables via
+- `include/buffalo/buf_emit.h` — DFA → four file-scope tables via
   `GlobalVar(name, MakeArray(elem_ty, len))` + `GlobalVarSetInitData(var,
   raw_blob, byte_len)` + `GlobalVarSetStatic`, plus the `buf_next` wrapper as
   `MakeFunction` + `FunctionSetBody(Quote("return buf_run(...);"))`. The driver
   loop is **not** emitted — it stays in `runtime/buf_rt.c`, which sidesteps
-  cccc's rejection of bare `Quote("continue;")` / `Quote("break;")`.
+  cccc's rejection of bare `Quote("continue;")` / `Quote("break;")`. M3 landed
+  the minimal version of this (see above); M4 extends it (`const`
+  qualification, the class table's `unsigned char` vs. the `char`-blob
+  workaround, name-parameterisation if pursued) and adds an emitted-table
+  correctness test — M3's blob was verified against `buf_run` by hand once,
+  not in CI.
 - `cccc -c=generated` yields a `.gen.c` that builds with plain `cc` against
   `runtime/buf_rt.c` + `examples/calc_main.c` + `examples/calc_tokens.h`.
 - `Makefile` gains `generated` and `native` targets.
@@ -103,7 +127,12 @@ log.
 
 - Switch-based (`re2c`-style) emission as an alternative to table mode; same spec
   input and generated API either way.
-- DFA minimisation (Hopcroft).
+- **DFA minimisation (Hopcroft).** M3 showed comptime cost is superlinear in
+  DFA state count (~2.25 s for `examples/big.l`'s 324 states); minimisation is
+  the lever that attacks the count itself and lifts the ~150-state ceiling.
+- **Raise `BUF_RX_MAX_RULES` 128 → 256** (match `BUF_RX_MAX_TOKENS`).
+  `examples/big.l` already sits at 103 / 128, and a Phase 2 combined grammar
+  clears 128 terminals. Cheap — the arena is a `static` array.
 - `{n,m}` repetition counts.
 - Line anchors `^ $`.
 - `--emit-tokens` mode: write the `<name>_tokens.h` instead of validating a

@@ -54,7 +54,11 @@ cccc's identifier resolver unless that extern arrived via `@shared`.
   (`tok_index + BUF_TOK_FIRST_USER`), or `-1` for `%skip`. Construction ends by
   asserting `accept[start] < 0` — the contract `buf_run` relies on with no
   runtime guard — and reports a violation at the offending rule's `line:col`.
-- `buf_emit.h` — DFA → four `static const` tables + the `buf_next` wrapper fn.
+- `buf_emit.h` — DFA → four file-scope tables (raw `GlobalVarSetInitData`
+  blobs) + the `buf_next` wrapper fn. Unlike the other comptime headers this
+  one uses cccc's reflection builtins and is never dual-compiled by a plain
+  `cc`. The M3 spike (see [performance.md](performance.md)) landed the minimal
+  version; M4 extends it into the build-with-stock-`cc` path.
 
 ### Runtime module
 
@@ -67,36 +71,48 @@ sharp edges around `while` / `break` / `continue` (see below).
 ## Generated table file — shape
 
 `cccc -c=generated src/buf_comptime.c -D BUF_SPEC='"calc.l"'` produces a
-`.gen.c` containing four file-scope `static const` tables and one wrapper:
+`.gen.c` containing four file-scope `static` tables and one wrapper:
 
 ```c
-static const unsigned char buf_dfa_class[256];            /* byte -> class 0..NCLASS-1 */
-static const short          buf_dfa_next[NSTATES * NCLASS]; /* flat; -1 = dead */
-static const short          buf_dfa_accept[NSTATES];      /* rule index, -1 = non-accepting */
-static const short          buf_rule_token[NRULES];       /* rule -> TOK_* kind, -1 for %skip */
+static char  buf_dfa_class[256];              /* byte -> class 0..NCLASS-1 */
+static short buf_dfa_next[NSTATES * NCLASS];  /* flat; -1 = dead */
+static short buf_dfa_accept[NSTATES];         /* rule index, -1 = non-accepting */
+static short buf_rule_token[NRULES];          /* rule -> TOK_* kind, -1 for %skip */
 
 BufToken buf_next(BufLexer *lx) {
-    return buf_run(lx, buf_dfa_class, buf_dfa_next, buf_dfa_accept,
-                   buf_rule_token, NSTATES, NCLASS, BUF_DFA_START);
+    return buf_run(lx, (const unsigned char *)buf_dfa_class, buf_dfa_next,
+                   buf_dfa_accept, buf_rule_token, NSTATES, NCLASS, 0);
 }
 ```
 
-`examples/digits_tables.c` is a hand-written file of exactly this shape — the M0
-stand-in for a generated one, so the runtime and harness can be exercised before
-the emitter exists.
+`examples/digits_tables.c` is a hand-written file of the same shape — the M0
+stand-in, so the runtime and harness could be exercised before the emitter
+existed. (`digits_tables.c` is `const`-qualified and `unsigned char`; M4
+decides whether the emitter matches that — see the class-table note below.)
 
 ### How the tables are emitted
 
 Each table is one `GlobalVar(name, MakeArray(elem_ty, len))` +
-`GlobalVarSetInitData(var, raw_bytes, byte_len)` + `GlobalVarSetStatic(var, 1)`.
-`GlobalVarSetInitData` takes a **raw byte blob** whose length must equal
-`ty->size`, so the emitter `memcpy`s the finished table — it does not build
-thousands of `MakeIntLiteral` nodes. `InitArray` / `CompoundLiteral` are not
-usable here: `CompoundLiteral` is function-scope-only in cccc V1.
+`GlobalVarSetInitData(var, raw_bytes, byte_len)` + `GlobalVarSetStatic(var, 1)`
++ `PublishNodeAt(var, ...)`. `GlobalVarSetInitData` takes a **raw byte blob**
+whose length must equal the emitted type's `ty->size`, so the emitter `memcpy`s
+each table's **live prefix** (`nstates*nclass` for `next`, etc. — never
+`sizeof` the whole arena) — it does not build thousands of `MakeIntLiteral`
+nodes. `InitArray` / `CompoundLiteral` are not usable here: `CompoundLiteral`
+is function-scope-only in cccc V1. cccc serialises the blob into the `.gen.c`
+as a C string literal (`"\000\001…"`), ~2× the raw bytes in source text.
 
 The `buf_next` wrapper is `MakeFunction` + `FunctionSetBody(Quote("return
-buf_run(...);"))`; `buf_run` and the table names reach the template because
-`buf_rt.h` comes in via `#include @shared`.
+buf_run(...);"))`; `buf_run` reaches the template because `buf_rt.h` comes in
+via `#include @shared`, and the four freshly-created globals reach it because
+each is `PublishNodeAt`'d right after creation (the auto-synthesised `extern`
+alone is not visible to a same-parse-point `Quote()`).
+
+**Class table is `char`, not `unsigned char`.** cccc's comptime `GetType`
+resolves only `"char"`, `"short"`, `"int"` — not `"unsigned char"`. The class
+table holds values `0..nclass-1` (≤ ~40), so a plain `char` blob is
+bit-identical and the wrapper casts it back to `const unsigned char *` for
+`buf_run`.
 
 ## The driver: `buf_run`
 
@@ -123,6 +139,22 @@ generic longest-match loop, hand-written in `buf_rt.c`, never emitted:
   may or may not be the trigger). Switching `{entry, exit}` to `int *`
   out-params cleared it. Returning scalars is fine (`buf_rx.h` does it
   throughout).
+- A source `#define` is **not** forwarded into a comptime body — only `-D` on
+  the cccc command line is. `BUF_SPEC` and `BUF_STOP_AFTER` are both `-D`s
+  (`bin/buffalo` passes them); the `#ifndef` fallbacks in `src/buf_comptime.c`
+  only satisfy the plain-`cc` host preprocessor.
+- A plain `static` function in an `@comptime`-routed header **can** call the
+  reflection builtins (`GlobalVar`, `Quote`, …) — `buf_emit.h` does. It does
+  not need the `[[cccc::comptime]]` attribute; adding it actually made the
+  function invisible to `src/buf_comptime.c`'s entry point.
+- `GetType` in the comptime VM resolves `"char"`, `"short"`, `"int"` but not
+  `"unsigned char"` (nor `"uchar"` / `"u8"`). Emit the widest signed type that
+  fits and cast at the use site.
+- The comptime VM runs interpreted, ~1000–1300× slower than the same code
+  under a plain `cc` (M3: `buf_dfa_build` for `big.l` 1.8 ms native vs. ~2.25 s
+  comptime). Keep the hot construction loops tight — an O(nstates) scan or a
+  per-call array clear that is free natively becomes seconds here; see
+  [performance.md](performance.md).
 
 ## `Quote()` gotchas (carried from ccccl)
 
@@ -136,6 +168,9 @@ generic longest-match loop, hand-written in `buf_rt.c`, never emitted:
   one-line wrapper.**
 - Externs referenced from a `Quote()` template must come in via `#include
   @shared`, not `@comptime`.
+- A global the same macro just created with `GlobalVar` is not visible to a
+  `Quote()` template at the same parse point via its auto-synthesised
+  `extern` — `PublishNodeAt(var, SyntheticToken("name"))` it first.
 - State held across emitter calls: `GlobalVar` + `GlobalVarSetStatic` (the
   gensym pattern).
 - `WithFn` / `WithBlock` etc. are single-iteration `for` loops — exit with

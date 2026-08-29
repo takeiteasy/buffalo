@@ -11,6 +11,7 @@
  */
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "buf_rx.h"
 #include "buf_nfa.h"
@@ -173,6 +174,18 @@ static void test_clike(void)
     n = run_lex("iffy", 4, k, l, 64);
     CHECK(n == 1 && k[0] == 10 && l[0] == 4, "'iffy' is one IDENT (longest match)");
 
+    /* M3 headroom: a real ~40-rule lexer must sit well inside every arena cap
+     * so the placeholder sizes are not silently one bad spec from overflow.
+     * `nfa` is the file-scope build scratch that build() just filled. */
+    CHECK(nfa.state_count * 4 < BUF_NFA_MAX_STATES,
+          "clike NFA states < 1/4 of BUF_NFA_MAX_STATES");
+    CHECK(dfa.nstates * 4 < BUF_DFA_MAX_STATES,
+          "clike DFA states < 1/4 of BUF_DFA_MAX_STATES");
+    CHECK(dfa.nstates * dfa.nclass * 4 < BUF_DFA_MAX_TRANS,
+          "clike transition table < 1/4 of BUF_DFA_MAX_TRANS");
+    CHECK(dfa.pool_used * 4 < BUF_DFA_SET_POOL,
+          "clike state-set pool < 1/4 of BUF_DFA_SET_POOL");
+
     n = run_lex("a /* c */ b", (int)strlen("a /* c */ b"), k, l, 64);
     CHECK(n == 2 && k[0] == 10 && k[1] == 10, "block comment skipped");
 
@@ -186,16 +199,19 @@ static void test_clike(void)
 }
 
 /* The construction must be deterministic -- first-appearance class numbering,
- * discovery-order state ids -- or the M5 generated/native paths won't produce
- * byte-identical tables. Build clike.l twice and compare the four tables. */
-static void test_determinism(void)
+ * discovery-order state ids, and (M3) a generation-stamped closure + hashed
+ * state-set lookup that must not perturb either -- or the M5 generated/native
+ * paths won't produce byte-identical tables. Build `path` twice and compare
+ * the four tables. `big.l` (324 DFA states) is the regression guard for the
+ * M3 DFA-construction rework. */
+static void test_determinism_of(const char *path)
 {
     static BufRx  rx_b;
     static BufNfa nfa_b;
     int i, ntrans;
 
-    if (build("examples/clike.l") != 0) return;         /* fills dfa */
-    if (buf_rx_read_file(&rx_b, "examples/clike.l") != 0) return;
+    if (build(path) != 0) return;                       /* fills dfa */
+    if (buf_rx_read_file(&rx_b, path) != 0) return;
     if (buf_nfa_build(&nfa_b, &rx_b) != 0) return;
     if (buf_dfa_build(&dfa2, &nfa_b, &rx_b) != 0) return;
 
@@ -221,6 +237,46 @@ static void test_determinism(void)
     CHECK(i == dfa.nrules, "rule_token[] is byte-identical across builds");
 }
 
+static void test_determinism(void)
+{
+    test_determinism_of("examples/clike.l");
+    test_determinism_of("examples/big.l");
+}
+
+/* Native per-phase timing -- printed, never asserted (a slow machine must not
+ * fail the suite). This is the M3 control for the comptime bench
+ * (tests/bench.sh): if the native shape scales the same way the comptime VM's
+ * does, the cost is algorithmic; if native is flat where the VM is not, the
+ * cost is VM interpretation overhead and tuning the arenas will not move it.
+ * See docs/performance.md. */
+static void time_phases(const char *path)
+{
+    static BufRx  trx;
+    static BufNfa tnfa;
+    static BufDfa tdfa;
+    const int     iters = 200;
+    int           i;
+    clock_t       t0;
+    double        rd, nf, df;
+
+    if (buf_rx_read_file(&trx, path) != 0) { printf("  (skip %s)\n", path); return; }
+
+    t0 = clock();
+    for (i = 0; i < iters; i++) buf_rx_read_file(&trx, path);
+    rd = (double)(clock() - t0) / CLOCKS_PER_SEC / iters * 1e3;
+
+    t0 = clock();
+    for (i = 0; i < iters; i++) buf_nfa_build(&tnfa, &trx);
+    nf = (double)(clock() - t0) / CLOCKS_PER_SEC / iters * 1e3;
+
+    t0 = clock();
+    for (i = 0; i < iters; i++) buf_dfa_build(&tdfa, &tnfa, &trx);
+    df = (double)(clock() - t0) / CLOCKS_PER_SEC / iters * 1e3;
+
+    printf("  %-18s read %7.3f ms   nfa %7.3f ms   dfa %7.3f ms\n",
+           path, rd, nf, df);
+}
+
 int main(void)
 {
     test_cls_total();
@@ -232,5 +288,11 @@ int main(void)
 
     printf("%s: %d checks, %d failures\n",
            failures ? "FAIL" : "ok  ", checks, failures);
+
+    printf("native per-phase timing (host cc, not cccc):\n");
+    time_phases("examples/calc.l");
+    time_phases("examples/clike.l");
+    time_phases("examples/big.l");
+
     return failures ? 1 : 0;
 }

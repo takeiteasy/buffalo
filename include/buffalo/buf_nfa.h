@@ -36,7 +36,11 @@
 extern "C" {
 #endif
 
-#define BUF_NFA_MAX_STATES 8192   /* ROADMAP M3 arena table; M3 tunes this */
+/* M3 measured examples/clike.l at 306 NFA states and the 103-rule
+ * examples/big.l at 1077 -- 4% and 13% of this. NFA construction stays in the
+ * noise; the comptime cost is all in buf_dfa_build. The cap stays generous
+ * (a static array; work is bounded by state_count). See docs/performance.md. */
+#define BUF_NFA_MAX_STATES 8192
 
 typedef struct {
     unsigned char bits[32];   /* labelled-edge byte set; all-zero if no edge */

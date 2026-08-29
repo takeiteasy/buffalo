@@ -26,10 +26,12 @@
  *
  * DFA state sets. Each DFA state is a sorted run of NFA state indices held in
  * one shared pool (set_off/set_len index into it); the pool is capped
- * independently of the DFA state count so M3 can tune the two knobs
- * separately. Runs are collected by sweeping NFA ids 0..state_count, so they
- * are ascending by construction and double as the canonical identity key.
- * State ids are handed out in worklist discovery order only.
+ * independently of the DFA state count. A closure is insertion-sorted
+ * ascending as it lands in the pool, so the run is the canonical identity key,
+ * and an FNV-1a index over that run (hash_head/hash_next) resolves an existing
+ * state in ~O(1) rather than an O(nstates) linear scan. State ids are handed
+ * out in worklist discovery order only. See docs/performance.md for why this
+ * matters (comptime-VM cost).
  *
  * Ties: accept[s] is the lowest rule index among the NFA accept states in
  * s's set, so earlier rules (%skip included) win a length tie -- matching the
@@ -53,10 +55,19 @@
 extern "C" {
 #endif
 
-#define BUF_DFA_MAX_STATES  4096            /* ROADMAP M3 arena table       */
+/* M3 spike (docs/performance.md): examples/clike.l -> 85 DFA states, 43
+ * classes; the 103-rule examples/big.l -> 324 states, 76 classes, 24624
+ * transitions, 2157 pooled indices. Every DFA arena is 6-140x inside its cap,
+ * and the comptime wall is VM interpretation of the loops below (native
+ * big.l: 1.8 ms; comptime: ~2.25 s), not arena size -- so the caps stay
+ * generous. The find/closure rework in this file (hash index, generation-
+ * stamped mark) already landed at M3; cutting the cost further means cutting
+ * the state count (Hopcroft minimisation, Phase 1.5). */
+#define BUF_DFA_MAX_STATES  4096
 #define BUF_DFA_MAX_CLASSES 256             /* worst case; typically 20-40  */
-#define BUF_DFA_MAX_TRANS   (BUF_DFA_MAX_STATES * 64)  /* next[]; M3 tunes  */
-#define BUF_DFA_SET_POOL    65536           /* shared NFA-index pool; M3    */
+#define BUF_DFA_MAX_TRANS   (BUF_DFA_MAX_STATES * 64)  /* == MAX_STATES*64  */
+#define BUF_DFA_SET_POOL    65536           /* shared NFA-index pool        */
+#define BUF_DFA_HASH        8192            /* state-set index; power of two */
 
 /* Value of the first %tokens entry. Must equal BUF_TOK_FIRST_USER in
  * runtime/buf_rt.h (TOK_EOF = 0, TOK_ERROR = 1 are reserved); kept as a
@@ -79,13 +90,27 @@ typedef struct {
     int    set_off[BUF_DFA_MAX_STATES];
     int    set_len[BUF_DFA_MAX_STATES];
 
+    /* state-set -> DFA id index: FNV-1a of the sorted run, chained. Replaces
+     * an O(nstates) linear scan per subset step -- see docs/performance.md. */
+    int    hash_head[BUF_DFA_HASH];
+    int    hash_next[BUF_DFA_MAX_STATES];
+
     int    seedbuf[BUF_NFA_MAX_STATES];     /* move-step target scratch     */
     int    scratch[BUF_NFA_MAX_STATES];     /* closure worklist             */
-    unsigned char mark[BUF_NFA_MAX_STATES]; /* closure visited set          */
+    unsigned mark[BUF_NFA_MAX_STATES];      /* closure visited: mark==mark_gen */
+    unsigned mark_gen;                      /* bumped per closure, not cleared */
 
     char error[BUF_RX_ERR_MAX];
     int  has_error;
     const char *spec_path;
+
+#ifdef BUF_DFA_STATS
+    /* M3 spike instrumentation (tracker). Off by default. closure-calls still
+     * scales with nstates*nclass; find-compares is now chain length in the
+     * hash index, not a full nstates scan. */
+    long stat_closure_calls;
+    long stat_find_compares;
+#endif
 } BufDfa;
 
 /* --- diagnostics (sticky, first-wins) -------------------------------- */
@@ -156,16 +181,32 @@ static void buf_dfa_partition(BufDfa *dfa, BufRx *rx) {
 
 /* Closure of `seed[0..nseed)` written (uncommitted) at pool[pool_used..].
  * Returns the ascending run length, or -1 if the pool is exhausted. The
- * seed array must not alias dfa->scratch. */
+ * seed array must not alias dfa->scratch.
+ *
+ * `mark` is a generation-stamped visited set: a cell counts as marked when it
+ * equals `mark_gen`, which is bumped once per call instead of zeroing the
+ * whole array (M3: that clear was O(N_nfa) on every one of ~nstates*nclass
+ * calls). The ascending run is produced by insertion-sorting the closure
+ * worklist -- which is a handful of states -- rather than sweeping all
+ * N_nfa ids. See docs/performance.md. */
 static int buf_dfa_closure(BufDfa *dfa, BufNfa *nfa,
                            const int *seed, int nseed) {
-    int i, s, wl = 0, len = 0;
+    int      i, s, wl = 0;
+    unsigned g;
 
-    for (i = 0; i < nfa->state_count; i++) dfa->mark[i] = 0;
+#ifdef BUF_DFA_STATS
+    dfa->stat_closure_calls++;
+#endif
+    if (++dfa->mark_gen == 0) {                 /* generation counter wrapped */
+        for (i = 0; i < BUF_NFA_MAX_STATES; i++) dfa->mark[i] = 0;
+        dfa->mark_gen = 1;
+    }
+    g = dfa->mark_gen;
+
     for (i = 0; i < nseed; i++) {
         s = seed[i];
-        if (s >= 0 && s < nfa->state_count && !dfa->mark[s]) {
-            dfa->mark[s] = 1;
+        if (s >= 0 && s < nfa->state_count && dfa->mark[s] != g) {
+            dfa->mark[s] = g;
             dfa->scratch[wl++] = s;
         }
     }
@@ -173,28 +214,46 @@ static int buf_dfa_closure(BufDfa *dfa, BufNfa *nfa,
         BufNfaState *st = &nfa->states[dfa->scratch[i]];
         int e;
         e = st->eps_a;
-        if (e >= 0 && !dfa->mark[e]) { dfa->mark[e] = 1; dfa->scratch[wl++] = e; }
+        if (e >= 0 && dfa->mark[e] != g) { dfa->mark[e] = g; dfa->scratch[wl++] = e; }
         e = st->eps_b;
-        if (e >= 0 && !dfa->mark[e]) { dfa->mark[e] = 1; dfa->scratch[wl++] = e; }
+        if (e >= 0 && dfa->mark[e] != g) { dfa->mark[e] = g; dfa->scratch[wl++] = e; }
     }
-    for (s = 0; s < nfa->state_count; s++) {
-        if (!dfa->mark[s]) continue;
-        if (dfa->pool_used + len >= BUF_DFA_SET_POOL) {
-            buf_dfa_err(dfa, "DFA state-set pool exhausted");
-            return -1;
+
+    if (dfa->pool_used + wl > BUF_DFA_SET_POOL) {
+        buf_dfa_err(dfa, "DFA state-set pool exhausted");
+        return -1;
+    }
+    /* scratch[0..wl) is discovery order; insertion-sort ascending into the
+     * pool so the run is the canonical identity key. wl is small. */
+    for (i = 0; i < wl; i++) {
+        int v = dfa->scratch[i], j = dfa->pool_used + i;
+        while (j > dfa->pool_used && dfa->pool[j - 1] > v) {
+            dfa->pool[j] = dfa->pool[j - 1];
+            j--;
         }
-        dfa->pool[dfa->pool_used + len] = s;
-        len++;
+        dfa->pool[j] = v;
     }
-    return len;
+    return wl;
 }
 
-/* Existing DFA state whose set equals the uncommitted run at pool[off..off+len),
- * or -1. Linear scan -- fine at M2/M3 sizes; a hash index is a Phase 1.5
- * improvement (see tracker). */
+/* FNV-1a of a sorted NFA-index run, folded to a BUF_DFA_HASH bucket. */
+static unsigned buf_dfa_hash(const int *run, int len) {
+    unsigned h = 2166136261u;
+    int j;
+    for (j = 0; j < len; j++) { h ^= (unsigned)run[j]; h *= 16777619u; }
+    h ^= (unsigned)len * 2654435761u;
+    return h & (unsigned)(BUF_DFA_HASH - 1);
+}
+
+/* Existing DFA state whose set equals the uncommitted run at
+ * pool[off..off+len), or -1. Hash index, chained on collision. */
 static int buf_dfa_find(BufDfa *dfa, int off, int len) {
+    unsigned b = buf_dfa_hash(&dfa->pool[off], len);
     int i, j;
-    for (i = 0; i < dfa->nstates; i++) {
+    for (i = dfa->hash_head[b]; i >= 0; i = dfa->hash_next[i]) {
+#ifdef BUF_DFA_STATS
+        dfa->stat_find_compares++;
+#endif
         if (dfa->set_len[i] != len) continue;
         for (j = 0; j < len; j++)
             if (dfa->pool[dfa->set_off[i] + j] != dfa->pool[off + j]) break;
@@ -203,17 +262,34 @@ static int buf_dfa_find(BufDfa *dfa, int off, int len) {
     return -1;
 }
 
+/* Register a committed DFA state (set_off/set_len already filled) in the index. */
+static void buf_dfa_hash_insert(BufDfa *dfa, int id) {
+    unsigned b = buf_dfa_hash(&dfa->pool[dfa->set_off[id]], dfa->set_len[id]);
+    dfa->hash_next[id] = dfa->hash_head[b];
+    dfa->hash_head[b]  = id;
+}
+
 /* --- subset construction ---------------------------------------- */
 
 static void buf_dfa_init(BufDfa *dfa, BufRx *rx) {
+    int i;
     dfa->nclass    = 0;
     dfa->nstates   = 0;
     dfa->nrules    = 0;
     dfa->start     = 0;
     dfa->pool_used = 0;
+    dfa->mark_gen  = 0;
+    /* one clear per build so a reused BufDfa cannot carry a stale generation
+     * stamp into the first closure (mark[s]==mark_gen is the visited test). */
+    for (i = 0; i < BUF_NFA_MAX_STATES; i++) dfa->mark[i] = 0;
+    for (i = 0; i < BUF_DFA_HASH; i++) dfa->hash_head[i] = -1;
     dfa->error[0]  = '\0';
     dfa->has_error = 0;
     dfa->spec_path = rx->spec_path ? rx->spec_path : "<spec>";
+#ifdef BUF_DFA_STATS
+    dfa->stat_closure_calls = 0;
+    dfa->stat_find_compares = 0;
+#endif
 }
 
 /* Build the DFA tables from a constructed NFA. Returns 0 / -1. */
@@ -243,6 +319,7 @@ static int buf_dfa_build(BufDfa *dfa, BufNfa *nfa, BufRx *rx) {
     dfa->set_len[0] = len;
     dfa->pool_used += len;
     dfa->nstates    = 1;
+    buf_dfa_hash_insert(dfa, 0);
 
     for (si = 0; si < dfa->nstates; si++) {   /* nstates grows in the loop */
         int win = -1;
@@ -281,6 +358,7 @@ static int buf_dfa_build(BufDfa *dfa, BufNfa *nfa, BufRx *rx) {
                 dfa->set_off[id] = dfa->pool_used;
                 dfa->set_len[id] = len;
                 dfa->pool_used  += len;      /* commit the run */
+                buf_dfa_hash_insert(dfa, id);
                 if ((long)dfa->nstates * dfa->nclass > BUF_DFA_MAX_TRANS) {
                     buf_dfa_err(dfa, "DFA transition table exceeded its arena");
                     return -1;

@@ -34,23 +34,27 @@ This exercises the whole runtime: `[0-9]+` longest-match, `%skip` for
 whitespace, `line:col` tracking across a newline, `TOK_ERROR` + single-byte
 resync on a stray byte, and `TOK_EOF` at end.
 
-## M1–M2: the comptime front half
+## M1–M3: the comptime pipeline
 
 `bin/buffalo lex` reads a `.l` spec at compile time — inside `cccc`'s comptime
 pass — into a regex AST, validates the checked-in token header against the
-spec's `%tokens` list, and (M2) builds the ε-NFA and DFA from it:
+spec's `%tokens` list, builds the ε-NFA and DFA, and emits the four DFA tables
+plus a `buf_next` wrapper into the `.gen.c`:
 
 ```sh
 $ bin/buffalo lex examples/calc.l
 Generated C written to examples/calc.l.gen.c
 ```
 
-The `.gen.c` is all but empty through M2: the emitter (M4) is not built yet. But
-as of M2 the comptime pass does the whole front half of the work — it reads the
-spec, validates the token header, runs Thompson construction (regex AST → ε-NFA)
-and subset construction (ε-NFA → DFA over alphabet equivalence classes), and
-then stops. What you get today is a spec reader and DFA builder that fail loudly
-and precisely. A malformed regex is reported at its `line:col` in the `.l` file:
+The generated file is minimal — four `static` table arrays and the wrapper.
+M4 turns it into one that builds cleanly with a stock `cc` against
+`runtime/buf_rt.c` and a `calc_main.c`. Running the whole thing at compile
+time costs ~0.38 s for a ~45-rule lexer, measured in
+[performance.md](performance.md); `-D BUF_STOP_AFTER=n` stops the pipeline
+early (`0` none … `5` emit) for per-phase timing.
+
+What you also get is a spec reader and DFA builder that fail loudly and
+precisely. A malformed regex is reported at its `line:col` in the `.l` file:
 
 ```sh
 $ bin/buffalo lex broken.l
@@ -96,8 +100,11 @@ See [ROADMAP.md](../ROADMAP.md). In short:
 - **M2** — the comptime pass also builds the ε-NFA and the DFA (alphabet
   equivalence classes) in memory; `make test` adds `t_nfa` and `t_dfa`, the
   latter driving the real `buf_run` over the freshly built tables.
+- **M3** — a minimal emit step (`buf_emit.h`) writes the four tables + the
+  `buf_next` wrapper into the `.gen.c`; `make bench` measures the comptime
+  cost of the whole pipeline (spike passed — see performance.md).
 - **M4** — `bin/buffalo lex examples/calc.l -o build/calc.l.gen.c` produces a
-  real table file that builds with `cc` against `runtime/buf_rt.c` and a
+  table file that builds cleanly with `cc` against `runtime/buf_rt.c` and a
   `calc_main.c`.
 - **M5** — `make check` (generated path) and `make native` (one-shot cccc path)
   both pass with byte-identical output for `calc`, `json`, `clike`.

@@ -14,27 +14,32 @@ file.
 
 ## Status
 
-**M2 — NFA + DFA construction.** `bin/buffalo lex` reads a `.l` spec at compile
-time into a regex AST with `line:col` diagnostics, validates the checked-in
-`<name>_tokens.h` against the `%tokens` list, then runs Thompson construction
-(regex AST → ε-NFA) and subset construction (ε-NFA → DFA over alphabet
-equivalence classes) inside cccc's comptime pass. The comptime emitter (M4) is
-not built yet, so the generated `.gen.c` is still all but empty — but the four
-runtime tables are computed and host-tested against the real `buf_run` driver.
-See [ROADMAP.md](ROADMAP.md).
+**M3 — spike passed, minimal emitter landed.** `bin/buffalo lex` reads a `.l`
+spec at compile time into a regex AST with `line:col` diagnostics, validates
+the checked-in `<name>_tokens.h` against the `%tokens` list, runs Thompson
+construction (regex AST → ε-NFA) and subset construction (ε-NFA → DFA over
+alphabet equivalence classes), and emits the four DFA tables plus a `buf_next`
+wrapper into the generated `.gen.c` — all inside cccc's comptime pass. The M3
+gate measured the comptime cost of this pipeline and reworked the DFA
+construction hot spots off the back of it: ~0.38 s added compile time for a
+~45-rule lexer, emission free (see
+[docs/performance.md](docs/performance.md)). M4 turns the generated file into
+one that builds with a stock `cc`. See [ROADMAP.md](ROADMAP.md).
 
 ## Build
 
 ```sh
 make          # builds the M0 demo lexer with the system cc, no cccc
 make check    # host unit tests + digits golden test; also `make spec` if cccc is present
-make spec     # runs the comptime front half (read + NFA + DFA) over examples/calc.l (needs cccc)
+make spec     # runs the full comptime pipeline (read + NFA + DFA + emit) over the specs (needs cccc)
+make bench    # M3 per-phase comptime-cost measurement (needs cccc + perl)
 ```
 
 ## Docs
 
 - [ROADMAP.md](ROADMAP.md) — milestones M1–M6, Phase 1.5, Phase 2.
 - [docs/design.md](docs/design.md) — the two-universe split, decision log, known limitations.
+- [docs/performance.md](docs/performance.md) — the M3 comptime-cost measurement and how to re-run it.
 - [docs/lex-spec-format.md](docs/lex-spec-format.md) — the `.l` spec reference.
 - [docs/getting-started.md](docs/getting-started.md) — building a spec end to end.
 

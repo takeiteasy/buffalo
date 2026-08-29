@@ -61,8 +61,12 @@ cmd_lex() {
         exit 3
     fi
 
+    # BUF_STOP_AFTER (M3 ablation ladder) has to be a -D: a source #define is
+    # not forwarded into a comptime body. 5 = full pipeline incl. emit. A
+    # trailing `-- -D BUF_STOP_AFTER=n [-D BUF_STATS]` overrides it (last -D
+    # wins), which is how tests/bench.sh drives the per-phase measurement.
     set -- -c=generated "$COMPTIME_SRC" -Iinclude/buffalo -Iruntime \
-        -D "BUF_SPEC=\"$spec\""
+        -D "BUF_SPEC=\"$spec\"" -D BUF_STOP_AFTER=5
     [ -n "$tokens" ] && set -- "$@" -D "BUF_TOKENS_H=\"$tokens\""
     set -- "$@" -o "$out"
 
@@ -81,7 +85,7 @@ sub=$1; shift
 case $sub in
     lex)             cmd_lex "$@" ;;
     parse)           cmd_parse "$@" ;;
-    version|--version) echo "buffalo 0.1.0 (M2 -- NFA + DFA construction)" ;;
+    version|--version) echo "buffalo 0.1.0 (M3 -- NFA + DFA + minimal emit)" ;;
     help|-h|--help)  usage ;;
     *)               echo "buffalo: unknown command '$sub'" >&2; usage >&2; exit 2 ;;
 esac

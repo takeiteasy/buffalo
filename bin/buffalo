@@ -1,0 +1,82 @@
+#!/bin/sh
+# buffalo -- thin front-end over cccc's comptime pass.
+#
+# There is no compiled buffalo binary: a spec is lowered to C by running
+# cccc over src/buf_comptime.c with the spec path passed as -D BUF_SPEC.
+# This script just assembles that invocation.
+#
+#   buffalo lex   SPEC.l [-o OUT.gen.c] [-- <extra cccc args>]
+#   buffalo parse SPEC.y ...                 (Phase 2 -- not implemented)
+#   buffalo version
+#   buffalo help
+#
+# Honours $CCCC (path to the cccc binary); falls back to `cccc` on PATH.
+
+set -eu
+
+CCCC="${CCCC:-cccc}"
+here=$(cd "$(dirname "$0")/.." && pwd)
+COMPTIME_SRC="$here/src/buf_comptime.c"
+
+usage() {
+    cat <<'EOF'
+usage: buffalo <command> [args]
+
+commands:
+  lex   SPEC.l [-o OUT.gen.c] [-- <extra cccc args>]
+        Lower a lexer spec to a portable C table file via cccc -c=generated.
+        Default output: SPEC.l.gen.c
+
+  parse SPEC.y ...
+        Parser generator. Phase 2 -- not implemented yet.
+
+  version
+  help
+EOF
+}
+
+cmd_lex() {
+    [ $# -ge 1 ] || { echo "buffalo lex: missing SPEC.l" >&2; exit 2; }
+    spec=$1; shift
+    out="${spec}.gen.c"
+    extra=""
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -o) out=$2; shift 2 ;;
+            --) shift; extra="$*"; break ;;
+            *)  echo "buffalo lex: unexpected argument '$1'" >&2; exit 2 ;;
+        esac
+    done
+
+    if [ ! -f "$spec" ]; then
+        echo "buffalo lex: no such spec file: $spec" >&2; exit 2
+    fi
+    if [ ! -f "$COMPTIME_SRC" ]; then
+        echo "buffalo lex: $COMPTIME_SRC does not exist yet." >&2
+        echo "The lexer generator lands at milestone M1 (see ROADMAP.md)." >&2
+        echo "M0 ships only the hand-written demo: run 'make check'." >&2
+        exit 3
+    fi
+
+    # shellcheck disable=SC2086
+    exec "$CCCC" -c=generated "$COMPTIME_SRC" \
+        -Iinclude/buffalo -Iruntime \
+        -D BUF_SPEC="\"$spec\"" \
+        -o "$out" $extra
+}
+
+cmd_parse() {
+    echo "buffalo parse: the parser generator is Phase 2 and is not implemented yet." >&2
+    echo "See ROADMAP.md." >&2
+    exit 3
+}
+
+[ $# -ge 1 ] || { usage >&2; exit 2; }
+sub=$1; shift
+case $sub in
+    lex)             cmd_lex "$@" ;;
+    parse)           cmd_parse "$@" ;;
+    version|--version) echo "buffalo 0.0.0 (M0 -- pre-generator scaffold)" ;;
+    help|-h|--help)  usage ;;
+    *)               echo "buffalo: unknown command '$sub'" >&2; usage >&2; exit 2 ;;
+esac

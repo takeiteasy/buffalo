@@ -1,0 +1,7 @@
+build/
+*.gen.c
+.DS_Store
+
+# bin/ is ignored by a global gitignore; the buffalo front-end lives there.
+!bin/
+!bin/buffalo

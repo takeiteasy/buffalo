@@ -3,7 +3,8 @@
 ## Prerequisites
 
 - A C compiler as `cc` (clang or gcc).
-- For M4 onward: the `cccc` binary on `PATH`, or `$CCCC` pointing at it.
+- For `buffalo lex` and `make spec`: the `cccc` binary on `PATH`, or `$CCCC`
+  pointing at it. The M0 demo and the host unit tests need only `cc`.
 
 ## M0: the hand-written demo
 
@@ -13,7 +14,7 @@ runtime contract is pinned down and testable.
 
 ```sh
 make          # cc -O2 -Wall, no cccc -> build/digits
-make check    # build/digits < examples/digits.txt | diff against examples/digits.expected
+make check    # host unit tests + the digits golden diff; runs `make spec` too when cccc is on PATH
 ```
 
 `build/digits` reads stdin and prints one line per token — `NAME "lexeme"
@@ -33,23 +34,62 @@ This exercises the whole runtime: `[0-9]+` longest-match, `%skip` for
 whitespace, `line:col` tracking across a newline, `TOK_ERROR` + single-byte
 resync on a stray byte, and `TOK_EOF` at end.
 
+## M1: the spec + regex reader
+
+`bin/buffalo lex` reads a `.l` spec at compile time — inside `cccc`'s comptime
+pass — into a regex AST, and validates the checked-in token header against the
+spec's `%tokens` list:
+
+```sh
+$ bin/buffalo lex examples/calc.l
+Generated C written to examples/calc.l.gen.c
+```
+
+The `.gen.c` is all but empty at M1: DFA construction (M2) and the emitter (M4)
+are not built yet. What M1 gives you is a spec reader that fails loudly and
+precisely. A malformed regex is reported at its `line:col` in the `.l` file:
+
+```sh
+$ bin/buffalo lex broken.l
+buffalo: broken.l:3:8: unterminated character class
+```
+
+and so is a token header that has drifted from the spec:
+
+```sh
+$ bin/buffalo lex examples/calc.l
+buffalo: examples/calc_tokens.h: token header has 'TOK_FLOAT' where 'TOK_INT' is expected
+```
+
+### The token header
+
+`buffalo lex SPEC.l` validates a checked-in `<name>_tokens.h` derived from the
+spec path: the trailing `.l` is replaced with `_tokens.h`, so
+`examples/calc.l` pairs with `examples/calc_tokens.h`. Pass `--tokens PATH` to
+point somewhere else. The header must open with
+
+```c
+enum { TOK_EOF = 0, TOK_ERROR = 1, TOK_<N0>, TOK_<N1>, ... };
+```
+
+where `N0, N1, ...` is the spec's `%tokens` list in order. Any missing kind,
+extra kind, reordering, or explicit value on a non-reserved kind is an error.
+
 ## `bin/buffalo`
 
-`bin/buffalo` is a thin shell wrapper that assembles the `cccc` invocation. It
-has real subcommands now but the generator behind `lex` does not exist yet:
+`bin/buffalo` is a thin shell wrapper that assembles the `cccc` invocation:
 
 ```sh
 $ bin/buffalo help
 $ bin/buffalo version
-$ bin/buffalo lex examples/calc.l      # errors: src/buf_comptime.c lands at M1
+$ bin/buffalo lex examples/calc.l [-o OUT.gen.c] [--tokens TOK.h]
 ```
 
 ## What each milestone unlocks
 
 See [ROADMAP.md](../ROADMAP.md). In short:
 
-- **M1** — `bin/buffalo lex` starts working: `.l` → regex AST, token-header
-  validation.
+- **M1** — `bin/buffalo lex` works: `.l` → regex AST, token-header validation.
 - **M4** — `bin/buffalo lex examples/calc.l -o build/calc.l.gen.c` produces a
   real table file that builds with `cc` against `runtime/buf_rt.c` and a
   `calc_main.c`.

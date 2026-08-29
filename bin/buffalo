@@ -5,7 +5,7 @@
 # cccc over src/buf_comptime.c with the spec path passed as -D BUF_SPEC.
 # This script just assembles that invocation.
 #
-#   buffalo lex   SPEC.l [-o OUT.gen.c] [-- <extra cccc args>]
+#   buffalo lex   SPEC.l [-o OUT.gen.c] [--tokens TOK.h] [-- <extra cccc args>]
 #   buffalo parse SPEC.y ...                 (Phase 2 -- not implemented)
 #   buffalo version
 #   buffalo help
@@ -23,9 +23,12 @@ usage() {
 usage: buffalo <command> [args]
 
 commands:
-  lex   SPEC.l [-o OUT.gen.c] [-- <extra cccc args>]
+  lex   SPEC.l [-o OUT.gen.c] [--tokens TOK.h] [-- <extra cccc args>]
         Lower a lexer spec to a portable C table file via cccc -c=generated.
         Default output: SPEC.l.gen.c
+        --tokens overrides the checked-in token header to validate against;
+        the default is SPEC with a trailing ".l" replaced by "_tokens.h"
+        (examples/calc.l -> examples/calc_tokens.h).
 
   parse SPEC.y ...
         Parser generator. Phase 2 -- not implemented yet.
@@ -39,12 +42,14 @@ cmd_lex() {
     [ $# -ge 1 ] || { echo "buffalo lex: missing SPEC.l" >&2; exit 2; }
     spec=$1; shift
     out="${spec}.gen.c"
+    tokens=""
     extra=""
     while [ $# -gt 0 ]; do
         case $1 in
-            -o) out=$2; shift 2 ;;
-            --) shift; extra="$*"; break ;;
-            *)  echo "buffalo lex: unexpected argument '$1'" >&2; exit 2 ;;
+            -o)       out=$2; shift 2 ;;
+            --tokens) tokens=$2; shift 2 ;;
+            --)       shift; extra="$*"; break ;;
+            *)        echo "buffalo lex: unexpected argument '$1'" >&2; exit 2 ;;
         esac
     done
 
@@ -52,17 +57,17 @@ cmd_lex() {
         echo "buffalo lex: no such spec file: $spec" >&2; exit 2
     fi
     if [ ! -f "$COMPTIME_SRC" ]; then
-        echo "buffalo lex: $COMPTIME_SRC does not exist yet." >&2
-        echo "The lexer generator lands at milestone M1 (see ROADMAP.md)." >&2
-        echo "M0 ships only the hand-written demo: run 'make check'." >&2
+        echo "buffalo lex: $COMPTIME_SRC does not exist." >&2
         exit 3
     fi
 
+    set -- -c=generated "$COMPTIME_SRC" -Iinclude/buffalo -Iruntime \
+        -D "BUF_SPEC=\"$spec\""
+    [ -n "$tokens" ] && set -- "$@" -D "BUF_TOKENS_H=\"$tokens\""
+    set -- "$@" -o "$out"
+
     # shellcheck disable=SC2086
-    exec "$CCCC" -c=generated "$COMPTIME_SRC" \
-        -Iinclude/buffalo -Iruntime \
-        -D BUF_SPEC="\"$spec\"" \
-        -o "$out" $extra
+    exec "$CCCC" "$@" $extra
 }
 
 cmd_parse() {
@@ -76,7 +81,7 @@ sub=$1; shift
 case $sub in
     lex)             cmd_lex "$@" ;;
     parse)           cmd_parse "$@" ;;
-    version|--version) echo "buffalo 0.0.0 (M0 -- pre-generator scaffold)" ;;
+    version|--version) echo "buffalo 0.1.0 (M1 -- spec + regex reader)" ;;
     help|-h|--help)  usage ;;
     *)               echo "buffalo: unknown command '$sub'" >&2; usage >&2; exit 2 ;;
 esac

@@ -14,16 +14,19 @@ file.
 
 ## Status
 
-**M0 — pre-generator scaffold.** The runtime (`runtime/buf_rt.{h,c}`) and the
-shape of a generated table file are in place and verified by a hand-written
-demo; the regex reader, DFA construction and the comptime emitter are not built
-yet. See [ROADMAP.md](ROADMAP.md).
+**M1 — spec + regex reader.** `bin/buffalo lex` runs: a `.l` spec is read at
+compile time into a regex AST with `line:col` diagnostics pointed back into the
+spec file, and the checked-in `<name>_tokens.h` is validated against the
+`%tokens` list. DFA construction (M2) and the comptime emitter (M4) are not
+built yet, so the generated `.gen.c` is still all but empty. See
+[ROADMAP.md](ROADMAP.md).
 
 ## Build
 
 ```sh
 make          # builds the M0 demo lexer with the system cc, no cccc
-make check    # lexes examples/digits.txt, diffs against the golden output
+make check    # host unit tests + digits golden test; also `make spec` if cccc is present
+make spec     # runs the comptime reader over examples/calc.l (needs cccc)
 ```
 
 ## Docs

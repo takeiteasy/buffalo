@@ -101,13 +101,10 @@ BufToken buf_run(BufLexer *lx,
         {
             int kind = rule_token[last_accept_rule];
             if (kind < 0) {
-                /* %skip rule: consume and rescan.
-                 * PLACEHOLDER: a %skip rule that can match the empty string
-                 * (e.g. `[ ]*`) makes last_accept_pos == tok_pos, so the
-                 * roll-forward above is a no-op and this loops forever. M0's
-                 * tables cannot produce it (the start state is non-accepting);
-                 * the M1 reader must reject empty-matching rules, or guard here.
-                 * Tracked in the buffalo tracker. */
+                /* %skip rule: consume and rescan. Safe against an infinite
+                 * loop because the table contract (buf_rt.h) guarantees
+                 * `accept[start] < 0`, so every match spans >= 1 byte and
+                 * this restart always advances. */
                 continue;
             }
             return buf_make(kind, lx->src + tok_pos, last_accept_pos - tok_pos,

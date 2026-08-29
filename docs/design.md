@@ -23,12 +23,16 @@ cccc's identifier resolver unless that extern arrived via `@shared`.
 
 ### Comptime modules (M1 onward)
 
-- `buf_rx.h` — spec-file + regex reader: `.l` text → regex AST, `line:col` per node.
+- `buf_rx.h` *(M1)* — spec-file + regex reader: `.l` text → regex AST,
+  `line:col` per node. Character classes are desugared into a 256-bit byte set
+  at parse time (so M2's alphabet partitioning is a set-grouping pass). A rule
+  whose regex is nullable is rejected here with a `line:col` error.
+- `buf_tokcheck.h` *(M1)* — validate a checked-in `<name>_tokens.h` against
+  `%tokens`.
 - `buf_nfa.h` — Thompson construction: regex AST → ε-NFA.
 - `buf_dfa.h` — subset construction: ε-NFA → DFA over alphabet equivalence
   classes (not raw bytes). Each DFA state carries the winning rule index (lowest
   rule index among the NFA accept states it contains — earlier rule wins ties).
-- `buf_tokcheck.h` — validate a checked-in `<name>_tokens.h` against `%tokens`.
 - `buf_emit.h` — DFA → four `static const` tables + the `buf_next` wrapper fn.
 
 ### Runtime module
@@ -117,6 +121,12 @@ checked in** (`examples/calc_tokens.h`), and the comptime pass validates it
 against the `.l` spec, erroring on any drift. `%tokens` in the `.l` is the
 authoritative list. `TOK_EOF = 0` and `TOK_ERROR = 1` are reserved (see
 `BUF_TOK_*` in `buf_rt.h`).
+
+The header path is not a directive in the spec: it is derived from the spec
+path by replacing a trailing `.l` with `_tokens.h` (`calc.l` →
+`calc_tokens.h`), overridable with `buffalo lex --tokens PATH` (which the
+wrapper forwards as `-D BUF_TOKENS_H`). `src/buf_comptime.c` does the
+derivation when `BUF_TOKENS_H` is undefined.
 
 ## Known limitations
 

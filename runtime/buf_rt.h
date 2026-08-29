@@ -60,6 +60,14 @@ BufToken buf_next(BufLexer *lx);
  *   rule_token [nrules]; rule index -> TOK_* kind, or -1 for a %skip rule
  *   start      the DFA start state
  *
+ * Table contract, relied on without a runtime guard:
+ *   - `cls` is total over all 256 byte values, every entry in 0..nclass-1.
+ *   - `accept[start] < 0` -- the start state is non-accepting. Equivalently:
+ *     no rule matches the empty string. A zero-length match would make a
+ *     %skip restart (below) spin in place and would emit zero-length named
+ *     tokens. The generator enforces this by rejecting a nullable rule when
+ *     it reads the spec.
+ *
  * Longest match wins; on a length tie the lowest rule index wins (baked into
  * `accept` at construction time). A matched %skip rule is consumed and the
  * scan restarts. No rule matching at the current byte yields a TOK_ERROR

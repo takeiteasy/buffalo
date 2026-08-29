@@ -37,8 +37,28 @@ RPAREN    ")"
 - If no rule matches at the current position, `buf_next` returns a `TOK_ERROR`
   token spanning the single offending byte and advances one byte.
 - End of input yields `TOK_EOF` forever.
+- **A rule whose regex can match the empty string is rejected** at read time
+  with a `line:col` error. A nullable `%skip` rule would make the scanner spin
+  in place; a nullable named rule would emit zero-length tokens. Write `x+`
+  where you would have written `x*` at the top level, or anchor the rule with a
+  required piece.
 
 `TOK_EOF = 0` and `TOK_ERROR = 1` are reserved and must not appear in `%tokens`.
+
+## The token header
+
+`buffalo lex SPEC.l` validates a checked-in `<name>_tokens.h` against the
+`%tokens` list. The path is derived from the spec path — the trailing `.l` is
+replaced with `_tokens.h` (`calc.l` → `calc_tokens.h`) — or given explicitly
+with `--tokens PATH`. The header must open with
+
+```c
+enum { TOK_EOF = 0, TOK_ERROR = 1, TOK_<N0>, TOK_<N1>, ... };
+```
+
+listing the `%tokens` names in order as `TOK_<NAME>`. A missing kind, an extra
+kind, a reordering, a wrong reserved value, or an explicit value pinned on a
+non-reserved kind is an error. `%tokens` is the only authority on order.
 
 ## Regex grammar (v1)
 
@@ -56,7 +76,12 @@ RPAREN    ")"
 | `(A)` | grouping |
 
 Not in v1: `{n,m}` counts, `^` / `$` anchors, `\b`, lookaround, non-greedy,
-backreferences.
+backreferences. These are not silently accepted — each is reported as a
+`line:col` error in the `.l` file.
+
+Unquoted whitespace inside a regex is insignificant: it separates atoms, so
+`"#" [^\n]*` is the concatenation of `"#"` and `[^\n]*`. A literal space is
+written `" "` or `[ ]`.
 
 ## Token value model
 

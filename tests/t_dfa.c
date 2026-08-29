@@ -177,6 +177,8 @@ static void test_clike(void)
     /* M3 headroom: a real ~40-rule lexer must sit well inside every arena cap
      * so the placeholder sizes are not silently one bad spec from overflow.
      * `nfa` is the file-scope build scratch that build() just filled. */
+    CHECK(rx.rule_count * 2 < BUF_RX_MAX_RULES,
+          "clike rules < 1/2 of BUF_RX_MAX_RULES");
     CHECK(nfa.state_count * 4 < BUF_NFA_MAX_STATES,
           "clike NFA states < 1/4 of BUF_NFA_MAX_STATES");
     CHECK(dfa.nstates * 4 < BUF_DFA_MAX_STATES,

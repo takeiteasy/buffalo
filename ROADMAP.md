@@ -74,13 +74,13 @@ Result (aarch64-darwin, cccc 0.1.0, `-O2`; measured on `clike.l` — 45 rules,
   `buf_dfa_closure` (per-call `mark[]` clear → generation counter; full
   `0..N_nfa` collect → insertion sort of the closure) — for ~6× on `big.l`.
   Determinism is unchanged and regression-tested on `big.l` in `t_dfa.c`.
-- **arena peaks**: everything 6–140× inside its cap except `big.l`'s 103 / 128
-  rules — `BUF_RX_MAX_RULES` should rise before Phase 2 (Phase 1.5). Caps stay
-  generous otherwise: `static` arrays, compile time tracks the live counts.
+- **arena peaks**: everything 2.5–140× inside its cap. `big.l` at 103 rules
+  first drove `BUF_RX_MAX_RULES` 128 → 256 (now matches `BUF_RX_MAX_TOKENS`).
+  Caps stay generous: `static` arrays, compile time tracks the live counts.
 
 | Arena | Cap | `clike.l` | `big.l` |
 |---|---|---|---|
-| rules | 128 | 45 | 103 |
+| rules | 256 | 45 | 103 |
 | regex AST nodes | 4096 | 162 | 739 |
 | NFA states | 8192 | 306 | 1077 |
 | DFA states | 4096 | 85 | 324 |
@@ -130,9 +130,6 @@ log.
 - **DFA minimisation (Hopcroft).** M3 showed comptime cost is superlinear in
   DFA state count (~2.25 s for `examples/big.l`'s 324 states); minimisation is
   the lever that attacks the count itself and lifts the ~150-state ceiling.
-- **Raise `BUF_RX_MAX_RULES` 128 → 256** (match `BUF_RX_MAX_TOKENS`).
-  `examples/big.l` already sits at 103 / 128, and a Phase 2 combined grammar
-  clears 128 terminals. Cheap — the arena is a `static` array.
 - `{n,m}` repetition counts.
 - Line anchors `^ $`.
 - `--emit-tokens` mode: write the `<name>_tokens.h` instead of validating a

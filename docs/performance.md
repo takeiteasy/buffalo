@@ -127,20 +127,20 @@ minimisation**, already scoped for Phase 1.5.
 | arena | cap | `clike.l` | `big.l` |
 |---|---|---|---|
 | regex AST nodes | 4096 | 162 | 739 |
-| rules | 128 | 45 | **103** |
+| rules | 256 | 45 | 103 |
 | NFA states | 8192 | 306 | 1077 |
 | DFA states | 4096 | 85 | 324 |
 | alphabet classes | 256 | 43 | 76 |
 | transition table (`nstates·nclass`) | 262144 | 3655 | 24624 |
 | state-set pool | 65536 | 477 | 2157 |
 
-`big.l` is the only spec that stresses a cap: 103 / 128 rules. `BUF_RX_MAX_RULES`
-should rise (to 256, matching `BUF_RX_MAX_TOKENS`) before Phase 2, where a
-combined lexer+parser grammar realistically clears 128 terminals — filed as
-Phase 1.5. Every other arena is 6–140× under its cap, and the caps stay
-generous: they are fixed-size `static` arrays and compile time tracks the live
-counts, not the caps, so shrinking one saves comptime-host `.bss` and nothing
-else. Note `BUF_DFA_MAX_TRANS` is `BUF_DFA_MAX_STATES * 64`.
+`big.l` at 103 rules first exposed `BUF_RX_MAX_RULES` at its old value of 128;
+it is now 256, matching `BUF_RX_MAX_TOKENS` (every `%tokens` entry needs a
+rule, plus the `%skip` rules — so the rule cap must be `>=` the token cap).
+Every arena is 2.5–140× under its cap, and the caps stay generous: they are
+fixed-size `static` arrays and compile time tracks the live counts, not the
+caps, so shrinking one saves comptime-host `.bss` and nothing else. Note
+`BUF_DFA_MAX_TRANS` is `BUF_DFA_MAX_STATES * 64`.
 
 ### Generated-file size
 

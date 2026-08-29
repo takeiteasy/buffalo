@@ -45,7 +45,10 @@ extern "C" {
 #endif
 
 #define BUF_RX_MAX_NODES   4096   /* regex AST nodes (ROADMAP M3 table) */
-#define BUF_RX_MAX_RULES   128
+#define BUF_RX_MAX_RULES   256    /* >= BUF_RX_MAX_TOKENS: every %tokens entry
+                                  * needs a rule, plus the %skip rules. A full
+                                  * C tokenizer is ~100 rules (examples/big.l);
+                                  * a Phase 2 combined grammar clears 128. */
 #define BUF_RX_MAX_TOKENS  256
 #define BUF_RX_NAME_MAX    64
 #define BUF_RX_SPEC_MAX    65536

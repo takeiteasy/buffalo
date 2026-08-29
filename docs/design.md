@@ -29,10 +29,31 @@ cccc's identifier resolver unless that extern arrived via `@shared`.
   whose regex is nullable is rejected here with a `line:col` error.
 - `buf_tokcheck.h` *(M1)* — validate a checked-in `<name>_tokens.h` against
   `%tokens`.
-- `buf_nfa.h` — Thompson construction: regex AST → ε-NFA.
-- `buf_dfa.h` — subset construction: ε-NFA → DFA over alphabet equivalence
-  classes (not raw bytes). Each DFA state carries the winning rule index (lowest
-  rule index among the NFA accept states it contains — earlier rule wins ties).
+- `buf_nfa.h` *(M2)* — Thompson construction: regex AST → ε-NFA. One fragment
+  per AST node; each NFA state has at most one labelled (byte-set) edge and up
+  to two ε edges, which covers every fragment. Each rule's fragment ends in an
+  accept state tagged with the rule index; all rule fragments hang off state 0
+  down a two-ε spine (a rule count above two rules out one fan-out state). A
+  nullable *sub-expression* — `(a?)+`, `(a*)*` — survives `buf_rx.h` (only a
+  nullable *rule* is rejected) and puts an ε cycle in the NFA, so every ε walk
+  is worklist + visited-set, never recursive. Fragment entry/exit come back
+  through out-params, not a returned struct: cccc's comptime VM mishandles a
+  by-value struct return from a recursive comptime function.
+- `buf_dfa.h` *(M2)* — subset construction: ε-NFA → DFA over alphabet
+  equivalence classes (not raw bytes). The alphabet partition starts with all
+  256 bytes in one class and splits on each CLASS-leaf byte set, then
+  **renumbers classes by first appearance over bytes 0..255** so the numbering
+  is deterministic and hash/iteration-order independent. Each DFA state is a
+  sorted run of NFA-state indices in one **shared pool** (`set_off`/`set_len`
+  index into it), capped independently of the DFA state count so M3 can tune
+  the two arena knobs separately; runs are collected by sweeping NFA ids
+  ascending, so they double as the identity key. State ids are handed out in
+  worklist **discovery order** only. Each DFA state carries the winning rule
+  index (lowest rule index among the NFA accept states it contains — earlier
+  rule wins ties), and `rule_token[r]` maps a rule to its `TOK_*` **value**
+  (`tok_index + BUF_TOK_FIRST_USER`), or `-1` for `%skip`. Construction ends by
+  asserting `accept[start] < 0` — the contract `buf_run` relies on with no
+  runtime guard — and reports a violation at the offending rule's `line:col`.
 - `buf_emit.h` — DFA → four `static const` tables + the `buf_next` wrapper fn.
 
 ### Runtime module
@@ -93,6 +114,15 @@ generic longest-match loop, hand-written in `buf_rt.c`, never emitted:
 
 `buf_dfa_class` must be **total** over all 256 byte values, every entry in
 `0..nclass-1` — the driver indexes `next[... + cls[byte]]` with no guard.
+
+## Comptime VM gotchas
+
+- Returning a small struct by value from a comptime function triggered
+  `error: return buffer pool was not rehydrated` (V1) — observed with
+  `buf_nfa.h`'s recursive fragment builder; not further isolated (recursion
+  may or may not be the trigger). Switching `{entry, exit}` to `int *`
+  out-params cleared it. Returning scalars is fine (`buf_rx.h` does it
+  throughout).
 
 ## `Quote()` gotchas (carried from ccccl)
 

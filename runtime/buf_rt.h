@@ -21,8 +21,10 @@ extern "C" {
  * `TOK_EOF = 0, TOK_ERROR = 1`; the comptime pass validates that (M1).
  */
 enum {
-    BUF_TOK_EOF   = 0,
-    BUF_TOK_ERROR = 1
+    BUF_TOK_EOF        = 0,
+    BUF_TOK_ERROR      = 1,
+    BUF_TOK_FIRST_USER = 2   /* first %tokens entry lands here; buf_dfa.h
+                              * maps rule index -> tok_index + this */
 };
 
 typedef struct {

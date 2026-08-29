@@ -1,7 +1,7 @@
 # The `.l` lexer spec format
 
-> Reference for the reader that lands at M1. `examples/calc.l` is the worked
-> example.
+> Reference for the `.l` reader. `examples/calc.l` is the small worked example;
+> `examples/clike.l` is a ~40-rule one.
 
 ```
 # Lines starting with '#' are comments. Blank lines are ignored.
@@ -82,6 +82,33 @@ backreferences. These are not silently accepted — each is reported as a
 Unquoted whitespace inside a regex is insignificant: it separates atoms, so
 `"#" [^\n]*` is the concatenation of `"#"` and `[^\n]*`. A literal space is
 written `" "` or `[ ]`.
+
+## Common patterns
+
+- **Keywords vs. identifiers.** A keyword rule and the `IDENT` rule both match
+  `if` with length 2. Longest match cannot separate them, so file order does:
+  put every keyword rule **before** `IDENT`.
+
+  ```
+  KW_IF    "if"
+  KW_ELSE  "else"
+  IDENT    [a-zA-Z_][a-zA-Z0-9_]*
+  ```
+
+- **Block comments** without `{n,m}` or non-greedy — the classic form:
+
+  ```
+  %skip  "/*" ([^*] | "*"+[^*/])* "*"+ "/"
+  ```
+
+- **String literals** with escapes:
+
+  ```
+  STRING  "\"" ([^"\\\n] | \\ .)* "\""
+  ```
+
+- **`%tokens` is one line.** There is no line continuation; list every name on
+  the single `%tokens` line.
 
 ## Token value model
 

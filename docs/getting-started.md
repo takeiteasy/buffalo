@@ -34,20 +34,23 @@ This exercises the whole runtime: `[0-9]+` longest-match, `%skip` for
 whitespace, `line:col` tracking across a newline, `TOK_ERROR` + single-byte
 resync on a stray byte, and `TOK_EOF` at end.
 
-## M1: the spec + regex reader
+## M1–M2: the comptime front half
 
 `bin/buffalo lex` reads a `.l` spec at compile time — inside `cccc`'s comptime
-pass — into a regex AST, and validates the checked-in token header against the
-spec's `%tokens` list:
+pass — into a regex AST, validates the checked-in token header against the
+spec's `%tokens` list, and (M2) builds the ε-NFA and DFA from it:
 
 ```sh
 $ bin/buffalo lex examples/calc.l
 Generated C written to examples/calc.l.gen.c
 ```
 
-The `.gen.c` is all but empty at M1: DFA construction (M2) and the emitter (M4)
-are not built yet. What M1 gives you is a spec reader that fails loudly and
-precisely. A malformed regex is reported at its `line:col` in the `.l` file:
+The `.gen.c` is all but empty through M2: the emitter (M4) is not built yet. But
+as of M2 the comptime pass does the whole front half of the work — it reads the
+spec, validates the token header, runs Thompson construction (regex AST → ε-NFA)
+and subset construction (ε-NFA → DFA over alphabet equivalence classes), and
+then stops. What you get today is a spec reader and DFA builder that fail loudly
+and precisely. A malformed regex is reported at its `line:col` in the `.l` file:
 
 ```sh
 $ bin/buffalo lex broken.l
@@ -90,6 +93,9 @@ $ bin/buffalo lex examples/calc.l [-o OUT.gen.c] [--tokens TOK.h]
 See [ROADMAP.md](../ROADMAP.md). In short:
 
 - **M1** — `bin/buffalo lex` works: `.l` → regex AST, token-header validation.
+- **M2** — the comptime pass also builds the ε-NFA and the DFA (alphabet
+  equivalence classes) in memory; `make test` adds `t_nfa` and `t_dfa`, the
+  latter driving the real `buf_run` over the freshly built tables.
 - **M4** — `bin/buffalo lex examples/calc.l -o build/calc.l.gen.c` produces a
   real table file that builds with `cc` against `runtime/buf_rt.c` and a
   `calc_main.c`.

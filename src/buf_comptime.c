@@ -15,9 +15,12 @@
  * tests), so they accumulate a sticky first-wins error string, and this
  * file lifts that string into a comptime diagnostic pointed at the .l file.
  *
- * At M1 there is no emit step: a successful run touches no nodes and yields
- * an all-but-empty .gen.c. The DFA tables and the buf_next wrapper arrive
- * at M4.
+ * At M2 there is still no emit step: a successful run reads the spec,
+ * validates the token header, and builds the NFA (buf_nfa.h) then the DFA
+ * (buf_dfa.h) inside the comptime VM, then stops -- yielding an all-but-empty
+ * .gen.c. Running the construction here (not just in the host tests) is the
+ * cheapest early read on the M3 arena / compile-time question. The DFA
+ * tables and the buf_next wrapper arrive at M4.
  *
  * Invocation (see bin/buffalo and docs/getting-started.md):
  *
@@ -32,6 +35,8 @@
 #include @shared "buf_rt.h"
 #include @comptime "buf_rx.h"
 #include @comptime "buf_tokcheck.h"
+#include @comptime "buf_nfa.h"
+#include @comptime "buf_dfa.h"
 #include @comptime <stdio.h>
 #include @comptime <string.h>
 
@@ -41,8 +46,10 @@
 
 [[cccc::comptime]]
 void buf_compile(void) {
-    static BufRx rx;
-    static BufTc tc;
+    static BufRx  rx;
+    static BufTc  tc;
+    static BufNfa nfa;
+    static BufDfa dfa;
     const char  *spec = BUF_SPEC;
     char         tokens_h[512];
     int          k = 0;
@@ -85,8 +92,18 @@ void buf_compile(void) {
         return;
     }
 
-    /* M1 stops here: reader + token-header validation only. The DFA
-     * construction (M2) and the emitter (M4) plug in below. */
+    if (buf_nfa_build(&nfa, &rx) != 0) {
+        MacroErrorAt(NULL, "buffalo: %s", nfa.error);
+        return;
+    }
+    if (buf_dfa_build(&dfa, &nfa, &rx) != 0) {
+        MacroErrorAt(NULL, "buffalo: %s", dfa.error);
+        return;
+    }
+
+    /* M2 stops here: reader + token-header validation + NFA + DFA. The
+     * emitter (M4) turns `dfa`'s four tables into GlobalVar init data and
+     * emits the buf_next wrapper below. */
 }
 
 buf_compile();

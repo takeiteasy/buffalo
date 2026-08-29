@@ -14,19 +14,21 @@ file.
 
 ## Status
 
-**M1 — spec + regex reader.** `bin/buffalo lex` runs: a `.l` spec is read at
-compile time into a regex AST with `line:col` diagnostics pointed back into the
-spec file, and the checked-in `<name>_tokens.h` is validated against the
-`%tokens` list. DFA construction (M2) and the comptime emitter (M4) are not
-built yet, so the generated `.gen.c` is still all but empty. See
-[ROADMAP.md](ROADMAP.md).
+**M2 — NFA + DFA construction.** `bin/buffalo lex` reads a `.l` spec at compile
+time into a regex AST with `line:col` diagnostics, validates the checked-in
+`<name>_tokens.h` against the `%tokens` list, then runs Thompson construction
+(regex AST → ε-NFA) and subset construction (ε-NFA → DFA over alphabet
+equivalence classes) inside cccc's comptime pass. The comptime emitter (M4) is
+not built yet, so the generated `.gen.c` is still all but empty — but the four
+runtime tables are computed and host-tested against the real `buf_run` driver.
+See [ROADMAP.md](ROADMAP.md).
 
 ## Build
 
 ```sh
 make          # builds the M0 demo lexer with the system cc, no cccc
 make check    # host unit tests + digits golden test; also `make spec` if cccc is present
-make spec     # runs the comptime reader over examples/calc.l (needs cccc)
+make spec     # runs the comptime front half (read + NFA + DFA) over examples/calc.l (needs cccc)
 ```
 
 ## Docs

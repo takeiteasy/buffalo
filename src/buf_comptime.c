@@ -32,8 +32,8 @@
 #include @shared "buf_rt.h"
 #include @comptime "buf_rx.h"
 #include @comptime "buf_tokcheck.h"
-#include @comptime < stdio.h>
-#include @comptime < string.h>
+#include @comptime <stdio.h>
+#include @comptime <string.h>
 
 #ifndef BUF_SPEC
 #define BUF_SPEC "examples/calc.l"

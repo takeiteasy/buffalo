@@ -2,6 +2,9 @@ build/
 *.gen.c
 .DS_Store
 
+# internal reference only, not part of buffalo's public surface
+STEAK-PORT-NOTES.md
+
 # bin/ is ignored by a global gitignore; the buffalo front-end lives there.
 !bin/
 !bin/buffalo

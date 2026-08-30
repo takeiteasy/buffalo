@@ -1,4 +1,0 @@
-# buffalo's .bflo spec files aren't recognised by GitHub's language detector
-# (Linguist) by extension; pin them to the closest built-in grammar for
-# syntax highlighting.
-*.bflo linguist-language=Lex

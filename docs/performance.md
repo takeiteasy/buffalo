@@ -198,8 +198,8 @@ as expected — a 300-state generated lexer is a ~100 KB file, most of it the
 
 Every cccc `-c=generated` file carries one dead `BufToken __cccc_tmp0;` local
 in the `buf_next` wrapper, which a warning build flags as unused. It is cccc
-codegen, not buffalo output; M4's generated build path will decide whether to
-suppress it. Emitted-table *correctness* (blob byte order, the `char` class
-table) has no automated regression test yet — it was verified once by hand
-against `buf_run` for `calc.l`; M5's generated/native parity target is where
-it gets pinned.
+codegen, not buffalo output; the `Makefile` scopes `-Wno-unused-variable` to
+the `.gen.c` translation unit (`GEN_CFLAGS`). Emitted-table *correctness*
+(blob byte order, the `char` class table) is pinned by `make native`'s
+three-way diff — hand-written `build/digits` == generated == one-shot native
+— the only end-to-end check of cccc's string-literal blob round-trip.

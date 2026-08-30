@@ -63,11 +63,11 @@ cccc's identifier resolver unless that extern arrived via `@shared`.
   (subset construction already lands near the minimal DFA) while adding its
   own `O(passes · nstates · nclass)` pass to the comptime hot path — see
   [performance.md](performance.md).
-- `buf_emit.h` — DFA → four file-scope tables (raw `GlobalVarSetInitData`
-  blobs) + the `buf_next` wrapper fn. Unlike the other comptime headers this
-  one uses cccc's reflection builtins and is never dual-compiled by a plain
-  `cc`. The M3 spike (see [performance.md](performance.md)) landed the minimal
-  version; M4 extends it into the build-with-stock-`cc` path.
+- `buf_emit.h` — DFA → four file-scope `static const` tables (raw
+  `GlobalVarSetInitData` blobs) + the `buf_next` wrapper fn. Unlike the other
+  comptime headers this one uses cccc's reflection builtins and is never
+  dual-compiled by a plain `cc`. Its output builds with a stock `cc` against
+  `runtime/buf_rt.c` and an example `_main.c`.
 
 ### Runtime module
 

@@ -111,4 +111,11 @@ BufToken buf_run(BufLexer *lx,
                             tok_line, tok_col);
         }
     }
+
+    /* Unreachable: every exit from the loop above is a return. cccc's
+     * -c=native flow analysis does not prove that and rejects the function
+     * for reaching the end of a non-void aggregate return; plain `cc`
+     * accepts either form. Kept as a harmless tail return so the one-shot
+     * `make native` path builds. */
+    return buf_make(BUF_TOK_EOF, lx->src + lx->pos, 0, lx->line, lx->col);
 }

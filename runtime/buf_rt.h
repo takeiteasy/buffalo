@@ -27,7 +27,14 @@ enum {
                               * maps rule index -> tok_index + this */
 };
 
-typedef struct {
+/*
+ * Both structs carry an explicit tag (`struct BufToken`, `struct BufLexer`)
+ * on top of the typedef: cccc's `-c=native` lowering rewrites an anonymous
+ * `typedef struct { ... } T;` to a bare `struct T` in the merged translation
+ * unit, which is then an incomplete type at every use site. A named tag
+ * sidesteps that; it is also plain good C.
+ */
+typedef struct BufToken {
     int         kind;    /* TOK_* constant from the checked-in <name>_tokens.h */
     const char *lexeme;  /* into the source buffer; not NUL-terminated */
     int         length;
@@ -35,7 +42,7 @@ typedef struct {
     int         col;     /* 1-based, byte column */
 } BufToken;
 
-typedef struct {         /* concrete: the caller stack-allocates `BufLexer lx;` */
+typedef struct BufLexer { /* concrete: the caller stack-allocates `BufLexer lx;` */
     const char *src;
     int         len;
     int         pos;

@@ -1,13 +1,19 @@
 /*
- * digits_tables.c -- HAND-WRITTEN stand-in for a buffalo-generated table file.
+ * digits_tables.c -- HAND-WRITTEN reference table file for examples/digits.l.
  *
- * M0 has no regex reader, no NFA/DFA construction and no comptime emitter
- * yet. This file is written by hand to the exact shape M4's emitter must
- * produce: four `static const` tables plus a one-line `buf_next` wrapper
- * that forwards to the generic `buf_run` driver in runtime/buf_rt.c.
- * M4 replaces this file with `buffalo lex digits.l -o digits.l.gen.c`.
+ * Written by hand to the exact shape buf_emit.h produces: four `static
+ * const` tables plus a one-line `buf_next` wrapper forwarding to the generic
+ * `buf_run` driver in runtime/buf_rt.c. `make` builds `build/digits` from
+ * this file with the system cc alone -- the only build path that needs no
+ * cccc -- and `make generated` / `make native` diff the emitter's output
+ * against it (the roadmap's three-way parity check).
  *
- * It encodes the spec that digits.l will carry:
+ * Parity is on the *token stream*, not the table contents: the emitter's
+ * subset construction numbers states differently (its `buf_dfa_accept` is
+ * `{-1, 1, 0}` where this file has `{-1, 0, 1}`), but both drive buf_run to
+ * the same tokens.
+ *
+ * It encodes digits.l:
  *
  *     %tokens INT
  *     INT    [0-9]+

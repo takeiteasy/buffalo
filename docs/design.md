@@ -83,10 +83,10 @@ sharp edges around `while` / `break` / `continue` (see below).
 `.gen.c` containing four file-scope `static` tables and one wrapper:
 
 ```c
-static char  buf_dfa_class[256];              /* byte -> class 0..NCLASS-1 */
-static short buf_dfa_next[NSTATES * NCLASS];  /* flat; -1 = dead */
-static short buf_dfa_accept[NSTATES];         /* rule index, -1 = non-accepting */
-static short buf_rule_token[NRULES];          /* rule -> TOK_* kind, -1 for %skip */
+static const char  buf_dfa_class[256];              /* byte -> class 0..NCLASS-1 */
+static const short buf_dfa_next[NSTATES * NCLASS];   /* flat; -1 = dead */
+static const short buf_dfa_accept[NSTATES];          /* rule index, -1 = non-accepting */
+static const short buf_rule_token[NRULES];           /* rule -> TOK_* kind, -1 for %skip */
 
 BufToken buf_next(BufLexer *lx) {
     return buf_run(lx, (const unsigned char *)buf_dfa_class, buf_dfa_next,
@@ -94,10 +94,11 @@ BufToken buf_next(BufLexer *lx) {
 }
 ```
 
-`examples/digits_tables.c` is a hand-written file of the same shape — the M0
-stand-in, so the runtime and harness could be exercised before the emitter
-existed. (`digits_tables.c` is `const`-qualified and `unsigned char`; M4
-decides whether the emitter matches that — see the class-table note below.)
+`examples/digits_tables.c` is a hand-written file of the same shape. It is
+the reference the emitter is diffed against (`make native`'s three-way
+parity check) and the one build path that needs no cccc at all. The emitter
+matches its `static const`; it does **not** match its `unsigned char` on the
+class table — see the class-table note below.
 
 ### How the tables are emitted
 
@@ -117,11 +118,18 @@ via `#include @shared`, and the four freshly-created globals reach it because
 each is `PublishNodeAt`'d right after creation (the auto-synthesised `extern`
 alone is not visible to a same-parse-point `Quote()`).
 
-**Class table is `char`, not `unsigned char`.** cccc's comptime `GetType`
-resolves only `"char"`, `"short"`, `"int"` — not `"unsigned char"`. The class
-table holds values `0..nclass-1` (≤ ~40), so a plain `char` blob is
-bit-identical and the wrapper casts it back to `const unsigned char *` for
-`buf_run`.
+Every table element type is wrapped in `MakeConst(...)`, so the tables emit
+`static const` — matching `digits_tables.c`.
+
+**Class table is `char`, not `unsigned char`.** Two independent reasons:
+cccc's comptime `GetType` resolves only `"char"`, `"short"`, `"int"` — not
+`"unsigned char"` — and cccc emits its forward-declaration block *before* the
+`@shared` `#include`, so a `typedef unsigned char BufClass;` in `buf_rt.h`
+would not be in scope as an emitted global's element type either. (That
+second point also forecloses `typedef`-based name-parameterisation of the
+table symbols.) The class table holds values `0..nclass-1` (≤ ~40), so a
+plain `char` blob is bit-identical and the wrapper casts it back to `const
+unsigned char *` for `buf_run`.
 
 ## The driver: `buf_run`
 
@@ -139,6 +147,18 @@ generic longest-match loop, hand-written in `buf_rt.c`, never emitted:
 
 `buf_dfa_class` must be **total** over all 256 byte values, every entry in
 `0..nclass-1` — the driver indexes `next[... + cls[byte]]` with no guard.
+
+`buf_run` carries an unreachable tail `return` after its `for (;;)`: every
+loop exit is already a `return`, but cccc's `-c=native` flow analysis does
+not prove that and rejects a non-void aggregate function that can fall off
+the end. Plain `cc` accepts either form.
+
+### `-c=native` and struct tags
+
+`BufToken` and `BufLexer` carry explicit tags (`typedef struct BufToken {…}
+BufToken;`). cccc's `-c=native` lowering rewrites an anonymous `typedef
+struct {…} T;` to a bare `struct T` in the merged translation unit, which is
+then an incomplete type at every use site. A named tag sidesteps it.
 
 ## Comptime VM gotchas
 
@@ -176,7 +196,14 @@ generic longest-match loop, hand-written in `buf_rt.c`, never emitted:
   driver loop stays in `buf_rt.c` and the emitter produces only data + a
   one-line wrapper.**
 - Externs referenced from a `Quote()` template must come in via `#include
-  @shared`, not `@comptime`.
+  @shared`, not `@comptime`. cccc emits its forward-declaration block for the
+  generated symbols *ahead* of that `@shared` include in the `.gen.c`, so a
+  `typedef` from the shared header cannot be an emitted global's element type
+  — only the base types `GetType` knows.
+- cccc's `Quote()` lowering leaves a dead `BufToken __cccc_tmp0;` local in the
+  generated wrapper (`-Wunused-variable`). It is cccc codegen, not buffalo's
+  output; the `Makefile` scopes `-Wno-unused-variable` to the `.gen.c`
+  translation unit (`GEN_CFLAGS`).
 - A global the same macro just created with `GlobalVar` is not visible to a
   `Quote()` template at the same parse point via its auto-synthesised
   `extern` — `PublishNodeAt(var, SyntheticToken("name"))` it first.

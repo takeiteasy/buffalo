@@ -94,29 +94,41 @@ Result (aarch64-darwin, cccc 0.1.0, `-O2`; measured on `clike.l` — 45 rules,
   ~2× the raw table bytes (~7.6 KB for `clike.l`), and the file scales with
   `nstates·nclass` (mostly the `next` table).
 
-### M4 — the emitter
+### M4 — the emitter — **done**
 
 - `include/buffalo/buf_emit.h` — DFA → four file-scope tables via
   `GlobalVar(name, MakeArray(elem_ty, len))` + `GlobalVarSetInitData(var,
   raw_blob, byte_len)` + `GlobalVarSetStatic`, plus the `buf_next` wrapper as
   `MakeFunction` + `FunctionSetBody(Quote("return buf_run(...);"))`. The driver
   loop is **not** emitted — it stays in `runtime/buf_rt.c`, which sidesteps
-  cccc's rejection of bare `Quote("continue;")` / `Quote("break;")`. M3 landed
-  the minimal version of this (see above); M4 extends it (`const`
-  qualification, the class table's `unsigned char` vs. the `char`-blob
-  workaround, name-parameterisation if pursued) and adds an emitted-table
-  correctness test — M3's blob was verified against `buf_run` by hand once,
-  not in CI.
+  cccc's rejection of bare `Quote("continue;")` / `Quote("break;")`.
+- Each table now emits `static const` (`MakeConst(elem_ty)`). The class table
+  stays `char`, not `unsigned char`, for two reasons: `GetType("unsigned
+  char")` returns NULL in the comptime VM, and cccc emits its
+  forward-declaration block *before* the `@shared` include, so a `typedef` in
+  `buf_rt.h` cannot serve as an emitted global's element type either. The
+  `buf_next` wrapper casts to `const unsigned char *` at the call site.
+- The emitted tables are verified end to end by `make native`'s three-way
+  diff (hand-written `build/digits` == generated == one-shot native), which
+  is the only check exercising cccc's string-literal blob round-trip.
 - `cccc -c=generated` yields a `.gen.c` that builds with plain `cc` against
-  `runtime/buf_rt.c` + `examples/calc_main.c` + `examples/calc_tokens.h`.
-- `Makefile` gains `generated` and `native` targets.
+  `runtime/buf_rt.c` + an example `_main.c` + `_tokens.h`; `examples/calc_main.c`
+  lands here.
+- `Makefile` gains `generated` and `native` targets, both run by `make check`
+  under the existing no-cccc skip gate.
+- Fixed alongside: `buf_run` grew an unreachable tail return (cccc's
+  `-c=native` flow analysis rejects a non-void aggregate function without
+  one), and `BufToken` / `BufLexer` grew explicit struct tags (cccc's
+  `-c=native` lowers an anonymous `typedef struct {…} T;` to an incomplete
+  `struct T`).
 
 ### M5 — example suite + parity
 
-- Complete the `calc` example (`calc_main.c`, `calc.expected`) and add `json`
-  and `clike` (`.l`, `_tokens.h`, `_main.c`, `.expected` each).
-- `make check` (generated path) and `make native` (one-shot path) both pass and
-  produce byte-identical output.
+- Complete the `calc` example (`calc.expected` + its golden diff; `calc_main.c`
+  landed in M4) and add `json` and `clike` (`.l`, `_tokens.h`, `_main.c`,
+  `.expected` each).
+- Extend the `generated` / `native` targets past `digits` to every example,
+  each with a byte-identical generated-vs-native diff.
 
 ### M6 — docs pass
 

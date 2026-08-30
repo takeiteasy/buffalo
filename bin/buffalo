@@ -85,7 +85,7 @@ sub=$1; shift
 case $sub in
     lex)             cmd_lex "$@" ;;
     parse)           cmd_parse "$@" ;;
-    version|--version) echo "buffalo 0.1.0 (M3 -- NFA + DFA + minimal emit)" ;;
+    version|--version) echo "buffalo 0.1.0 (M4 -- lexer generator)" ;;
     help|-h|--help)  usage ;;
     *)               echo "buffalo: unknown command '$sub'" >&2; usage >&2; exit 2 ;;
 esac

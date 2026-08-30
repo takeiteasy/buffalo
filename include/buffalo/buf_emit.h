@@ -7,12 +7,12 @@
  * only ever reaches a compiler through `#include @comptime "buf_emit.h"` from
  * src/buf_comptime.c. The host unit tests never include it.
  *
- * M3 scope. This is the minimal emit step the M3 spike (tracker) needs to
- * price emission: four raw `GlobalVarSetInitData` blobs (a memcpy of each
- * table's live prefix, not thousands of literal nodes) and a one-line
- * `buf_next` that forwards to buf_run. M4 owns everything past that -- the
- * `.gen.c` that then builds with a plain `cc`, the Makefile generated/native
- * parity targets, and the example `_main.c` drivers.
+ * Each table is one raw `GlobalVarSetInitData` blob -- a memcpy of the
+ * table's live prefix, not thousands of literal nodes -- emitted `static
+ * const`; the `buf_next` wrapper is a one-line `Quote()` that forwards to
+ * buf_run. The generated `.gen.c` then builds with a plain `cc` against
+ * runtime/buf_rt.c + an example `_main.c`; `make generated` / `make native`
+ * exercise both lowering paths and diff their output.
  *
  * Table contract (see runtime/buf_rt.h's buf_run):
  *
@@ -48,17 +48,29 @@
  * Plain `static` in an @comptime-routed header -- the same shape buf_dfa.h's
  * helpers use, so buf_comptime.c's [[cccc::comptime]] entry can call it. */
 static int buf_emit_tables(BufDfa *dfa, BufRx *rx) {
-    /* cccc's comptime GetType resolves only "char" / "short" / "int" (not
-     * "unsigned char"). The class table holds values 0..nclass-1 (<= ~40), so
-     * a plain `char` blob is bit-identical; the buf_next wrapper casts it back
-     * to `const unsigned char *` for buf_run. */
-    Type *char_ty  = GetType("char");
-    Type *short_ty = GetType("short");
+    /* The class table is emitted as `char`, not `unsigned char`, for two
+     * independent reasons:
+     *   1. cccc's comptime GetType resolves only "char" / "short" / "int" --
+     *      "unsigned char" returns NULL.
+     *   2. A `typedef unsigned char BufClass;` in buf_rt.h does not help
+     *      either: cccc emits its forward-declaration block *before* the
+     *      `@shared` #include, so a name from that header is not in scope as
+     *      an emitted global's element type. (This also rules out
+     *      typedef-based name-parameterisation of the table symbols.)
+     * The table holds values 0..nclass-1 (<= ~40), so a `char` blob is
+     * bit-identical; the buf_next wrapper casts it to `const unsigned char *`
+     * for buf_run. MakeConst() gives each table the `static const`
+     * qualification the hand-written examples/digits_tables.c uses. */
+    Type *char_ty  = MakeConst(GetType("char"));
+    Type *short_ty = MakeConst(GetType("short"));
     int   ntrans   = dfa->nstates * dfa->nclass;
     int   sh       = (int)sizeof(short);
     Obj  *v_cls, *v_next, *v_accept, *v_rtok, *fn;
     Node *lx;
 
+    /* rx is unused today: rule names, the %tokens header and TOK_* spellings
+     * are all baked into dfa->rule_token numerically. Kept as the hook for
+     * symbolic-name emission (M5) and the Phase 2 parser. */
     (void)rx;
 
     v_cls = GlobalVar("buf_dfa_class", MakeArray(char_ty, 256));

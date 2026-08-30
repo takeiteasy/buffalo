@@ -16,10 +16,11 @@
  * file lifts that string into a comptime diagnostic pointed at the .l file.
  *
  * A successful run reads the spec, validates the token header, builds the
- * NFA (buf_nfa.h) then the DFA (buf_dfa.h), and emits the four DFA tables
- * plus the buf_next wrapper (buf_emit.h) into the .gen.c. M4 owns everything
- * past that: the .gen.c that then builds with a plain `cc`, the Makefile
- * generated/native parity targets, and the example _main.c drivers.
+ * NFA (buf_nfa.h) then the DFA (buf_dfa.h), and emits the four `static
+ * const` DFA tables plus the buf_next wrapper (buf_emit.h) into the .gen.c.
+ * That file then builds with a plain `cc` against runtime/buf_rt.c and an
+ * example _main.c (`make generated`); `cccc -c=native` does the whole thing
+ * in one invocation (`make native`), and the two outputs must match.
  *
  * M3 instrumentation (see docs/performance.md):
  *

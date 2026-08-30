@@ -3,18 +3,20 @@
 ## Prerequisites
 
 - A C compiler as `cc` (clang or gcc).
-- For `buffalo lex` and `make spec`: the `cccc` binary on `PATH`, or `$CCCC`
-  pointing at it. The M0 demo and the host unit tests need only `cc`.
+- For `buffalo lex`, `make spec`, `make generated`, `make native`: the `cccc`
+  binary on `PATH`, or `$CCCC` pointing at it. The default `make` build and
+  the host unit tests need only `cc`.
 
-## M0: the hand-written demo
+## The no-cccc build
 
-M0 ships no generator. It ships the runtime and a hand-written table file
-(`examples/digits_tables.c`) of the exact shape the generator will emit, so the
-runtime contract is pinned down and testable.
+`make` builds `build/digits` from the runtime and a hand-written table file
+(`examples/digits_tables.c`) with the system `cc` alone — no cccc. That file
+is also the reference the emitter's output is diffed against (see
+`make native` below).
 
 ```sh
 make          # cc -O2 -Wall, no cccc -> build/digits
-make check    # host unit tests + the digits golden diff; runs `make spec` too when cccc is on PATH
+make check    # host unit tests + the digits golden diff; also spec/generated/native when cccc is on PATH
 ```
 
 `build/digits` reads stdin and prints one line per token — `NAME "lexeme"
@@ -34,24 +36,23 @@ This exercises the whole runtime: `[0-9]+` longest-match, `%skip` for
 whitespace, `line:col` tracking across a newline, `TOK_ERROR` + single-byte
 resync on a stray byte, and `TOK_EOF` at end.
 
-## M1–M3: the comptime pipeline
+## The comptime pipeline
 
 `bin/buffalo lex` reads a `.l` spec at compile time — inside `cccc`'s comptime
 pass — into a regex AST, validates the checked-in token header against the
-spec's `%tokens` list, builds the ε-NFA and DFA, and emits the four DFA tables
-plus a `buf_next` wrapper into the `.gen.c`:
+spec's `%tokens` list, builds the ε-NFA and DFA, and emits four
+`static const` DFA tables plus a `buf_next` wrapper into the `.gen.c`:
 
 ```sh
 $ bin/buffalo lex examples/calc.l
 Generated C written to examples/calc.l.gen.c
 ```
 
-The generated file is minimal — four `static` table arrays and the wrapper.
-M4 turns it into one that builds cleanly with a stock `cc` against
-`runtime/buf_rt.c` and a `calc_main.c`. Running the whole thing at compile
+The generated file builds with a stock `cc` against `runtime/buf_rt.c` and an
+example `_main.c` — no cccc past this point. Running the pipeline at compile
 time costs ~0.38 s for a ~45-rule lexer, measured in
-[performance.md](performance.md); `-D BUF_STOP_AFTER=n` stops the pipeline
-early (`0` none … `5` emit) for per-phase timing.
+[performance.md](performance.md); `-D BUF_STOP_AFTER=n` stops it early (`0`
+none … `5` emit) for per-phase timing.
 
 What you also get is a spec reader and DFA builder that fail loudly and
 precisely. A malformed regex is reported at its `line:col` in the `.l` file:
@@ -92,36 +93,36 @@ $ bin/buffalo version
 $ bin/buffalo lex examples/calc.l [-o OUT.gen.c] [--tokens TOK.h]
 ```
 
-## What each milestone unlocks
+## The two build paths
 
-See [ROADMAP.md](../ROADMAP.md). In short:
-
-- **M1** — `bin/buffalo lex` works: `.l` → regex AST, token-header validation.
-- **M2** — the comptime pass also builds the ε-NFA and the DFA (alphabet
-  equivalence classes) in memory; `make test` adds `t_nfa` and `t_dfa`, the
-  latter driving the real `buf_run` over the freshly built tables.
-- **M3** — a minimal emit step (`buf_emit.h`) writes the four tables + the
-  `buf_next` wrapper into the `.gen.c`; `make bench` measures the comptime
-  cost of the whole pipeline (spike passed — see performance.md).
-- **M4** — `bin/buffalo lex examples/calc.l -o build/calc.l.gen.c` produces a
-  table file that builds cleanly with `cc` against `runtime/buf_rt.c` and a
-  `calc_main.c`.
-- **M5** — `make check` (generated path) and `make native` (one-shot cccc path)
-  both pass with byte-identical output for `calc`, `json`, `clike`.
-
-Once M4 exists the two invocations are:
+From M4 on there are two ways to get from a `.l` spec to a program, and they
+must produce byte-identical output. `make generated` and `make native` run
+both over `digits` (extended to every example in M5); `make check` invokes
+them under a no-cccc skip gate.
 
 ```sh
-# inspectable path
-cccc -c=generated src/buf_comptime.c -Iinclude/buffalo -Iruntime \
-    -D BUF_SPEC='"examples/calc.l"' -o build/calc.l.gen.c
-cc -O2 -Iruntime -Iexamples -o build/calc \
-    examples/calc_main.c build/calc.l.gen.c runtime/buf_rt.c
-
-# one-shot path
-cccc -c=native src/buf_comptime.c examples/calc_main.c runtime/buf_rt.c \
-    -Iinclude/buffalo -Iruntime -D BUF_SPEC='"examples/calc.l"' -o build/calc_native
+make generated   # bin/buffalo lex -> .gen.c, then plain cc; runs the digits golden diff
+make native      # one cccc -c=native invocation; three-way diff vs. generated and the
+                 # hand-written build/digits
 ```
 
-`-D` (not a source `#define`) carries the spec path — comptime bodies do not see
-ordinary source `#define`s.
+The underlying invocations, for `digits`:
+
+```sh
+# inspectable path: lower, then build with a stock cc
+bin/buffalo lex examples/digits.l -o build/digits.l.gen.c
+cc -O2 -Iruntime -Iexamples -o build/digits_gen \
+    build/digits.l.gen.c examples/digits_main.c runtime/buf_rt.c
+
+# one-shot path: cccc does lowering + build in one step, no intermediate file
+cccc -c=native src/buf_comptime.c runtime/buf_rt.c examples/digits_main.c \
+    -Iinclude/buffalo -Iruntime -Iexamples \
+    -D BUF_SPEC='"examples/digits.l"' -D BUF_STOP_AFTER=5 -o build/digits_native
+```
+
+`-D` (not a source `#define`) carries `BUF_SPEC` and `BUF_STOP_AFTER` —
+comptime bodies do not see ordinary source `#define`s, which is why the
+`native` invocation passes `BUF_STOP_AFTER=5` explicitly where `bin/buffalo`
+does it for you.
+
+For what lands in each milestone see [ROADMAP.md](../ROADMAP.md).

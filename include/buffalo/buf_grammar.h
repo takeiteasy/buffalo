@@ -633,7 +633,26 @@ static void buf_lalr_closure1(BufGrammar *g, BufRx *rx, int state, int kidx) {
             int s2, idx2;
             unsigned char spon[BUF_LALR_LA_BYTES];
 
-            if (d >= L) continue;
+            if (d >= L) {
+                /* A completed item produced purely by closure (e.g. an
+                 * epsilon production's reduce item) has no successor to
+                 * shift/goto into -- its lookahead belongs on ITS OWN
+                 * la_pool slot in the current state, not a successor's. */
+                idx2 = buf_lalr_find_item(g, state, t);
+
+                memcpy(spon, g->acc[t], BUF_LALR_LA_BYTES);
+                buf_lalr_bits_clear(spon, BUF_LALR_DUMMY_BIT);
+                if (buf_lalr_bits_any(spon))
+                    buf_lalr_bits_or_changed(g->la_pool[idx2], spon);
+
+                if (buf_lalr_bits_get(g->acc[t], BUF_LALR_DUMMY_BIT) &&
+                    g->nedges < BUF_LALR_MAX_EDGES) {
+                    g->edge_from[g->nedges] = kidx;
+                    g->edge_to[g->nedges]   = idx2;
+                    g->nedges++;
+                }
+                continue;
+            }
             s = buf_lalr_psym(rx, p, d);
             if (s.is_terminal)
                 s2 = BUF_LALR_SHIFT_STATE(

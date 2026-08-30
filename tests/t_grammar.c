@@ -251,6 +251,14 @@ static void test_epsilon_production(void) {
             "%grammar\n%start args\nargs : | INT args ;\n") != 0)
         return;
     CHECK(g.nstates > 0, "epsilon-production grammar builds a non-trivial automaton");
+
+    /* Regression: the epsilon alternative's reduce item is a completed item
+     * produced purely by closure (never a kernel item), so its lookahead
+     * must land on its own la_pool slot in the state that closes over it,
+     * not a successor's -- the start state must be able to reduce 'args :'
+     * on EOF, or an empty/nullable-prefix input could never parse. */
+    CHECK(BUF_LALR_IS_REDUCE(g.action[g.start_state * g.ntok + 0]),
+          "start state reduces the empty 'args' alternative on EOF lookahead");
 }
 
 /* --- deeper state chains: a 5-tier precedence ladder ---------------------

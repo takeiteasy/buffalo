@@ -196,19 +196,24 @@ with an anonymous typedef.
   the template text: `Quote("{ $1; }", s)`, not `"{ $1 }"` — a `$N` splice
   always parses in expression position even when the node behind it is a
   complete statement.
-- `continue;` / `break;` as bare `Quote()` text is rejected ("stray continue") at
-  template-parse time, before the node is spliced anywhere. **This is why the
+- A `Quote()` template is validated (including `break`/`continue` and
+  variable-scope checks) at the point it is parsed, not after it is spliced
+  into an outer template — a statement built by its own `Quote()` call can't
+  `break`/`continue` out of, or reference a variable from, a loop it will only
+  be inside of once spliced elsewhere; `continue;`/`break;` as bare `Quote()`
+  text is rejected ("stray continue") at template-parse time regardless of
+  where it's later spliced. Keep a loop and anything scoped to it in one
+  `Quote()` call rather than composing it from smaller ones. **This is why the
   driver loop stays in `buf_rt.c` and the emitter produces only data + a
-  one-line wrapper.**
+  one-line wrapper.** Filed as a cccc enhancement,
+  [~takeiteasy/cccc#1242](https://todo.sr.ht/~takeiteasy/cccc/1242).
 - Externs referenced from a `Quote()` template must come in via `#include
   @shared`, not `@comptime`. cccc emits its forward-declaration block for the
   generated symbols *ahead* of that `@shared` include in the `.gen.c`, so a
   `typedef` from the shared header cannot be an emitted global's element type
-  — only the base types `GetType` knows.
-- cccc's `Quote()` lowering leaves a dead `BufToken __cccc_tmp0;` local in the
-  generated wrapper (`-Wunused-variable`). It is cccc codegen, not buffalo's
-  output; the `Makefile` scopes `-Wno-unused-variable` to the `.gen.c`
-  translation unit (`GEN_CFLAGS`).
+  — only the base types `GetType` knows. Worse: cccc doesn't catch this itself
+  — it reports success and emits C that fails to compile. Filed as a cccc bug,
+  [~takeiteasy/cccc#1241](https://todo.sr.ht/~takeiteasy/cccc/1241).
 - A global the same macro just created with `GlobalVar` is not visible to a
   `Quote()` template at the same parse point via its auto-synthesised
   `extern` — `PublishNodeAt(var, SyntheticToken("name"))` it first.

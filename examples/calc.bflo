@@ -16,8 +16,9 @@ RPAREN    ")"
 
 # The grammar section is read and validated by the spec reader (a %grammar
 # block, terminals resolved implicitly against %tokens, an explicit required
-# %start) but nothing downstream builds parser tables from it yet -- it has
-# no effect on the lexer pipeline below.
+# %start), and buf_grammar.h builds and validates LALR(1) parser tables from
+# it -- but it still has no effect on the lexer pipeline below (a runtime
+# parser driver over these tables is follow-on work).
 %grammar
 %start expr
 

@@ -9,12 +9,17 @@
 #   buf_tokcheck.h  <name>_tokens.h validator         -> tests/t_tokcheck.c
 #   buf_nfa.h       Thompson construction (AST->NFA)  -> tests/t_nfa.c
 #   buf_dfa.h       subset construction (NFA->DFA)    -> tests/t_dfa.c
+#   buf_grammar.h   LALR(1) table construction        -> tests/t_grammar.c
+#
+# buf_grammar.h is host-test-only for now (not yet wired into
+# src/buf_comptime.c's comptime pipeline -- see the tracker) but follows the
+# same dual-compile shape as the other comptime headers above.
 #
 # buf_emit.h (DFA -> GlobalVar tables + buf_next) is comptime-VM only -- it
 # uses cccc's reflection builtins, so no host test includes it.
 #
-# t_dfa also links runtime/buf_rt.c and drives the real buf_run over the
-# freshly built tables. The `spec` target runs the full comptime pipeline over
+# t_dfa and t_grammar also link runtime/buf_rt.c and drive the real buf_run
+# over freshly built tables. The `spec` target runs the full comptime pipeline over
 # every reference spec; `check` invokes it -- plus the `generated` and
 # `native` parity targets -- but skips all three with a notice when cccc is
 # not on PATH. `bench` is the per-phase cost measurement (docs/performance.md).
@@ -34,7 +39,8 @@ CCCC   ?= cccc
 RT_SRC   := runtime/buf_rt.c
 RT_HDRS  := runtime/buf_rt.h
 CT_HDRS  := include/buffalo/buf_rx.h include/buffalo/buf_tokcheck.h \
-            include/buffalo/buf_nfa.h include/buffalo/buf_dfa.h
+            include/buffalo/buf_nfa.h include/buffalo/buf_dfa.h \
+            include/buffalo/buf_grammar.h
 
 EXAMPLES := digits calc clike json
 
@@ -64,11 +70,15 @@ build/t_nfa: tests/t_nfa.c $(CT_HDRS) | build
 build/t_dfa: tests/t_dfa.c $(CT_HDRS) $(RT_SRC) $(RT_HDRS) | build
 	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_dfa.c $(RT_SRC)
 
-test: build/t_rx build/t_tokcheck build/t_nfa build/t_dfa
+build/t_grammar: tests/t_grammar.c $(CT_HDRS) $(RT_SRC) $(RT_HDRS) | build
+	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_grammar.c $(RT_SRC)
+
+test: build/t_rx build/t_tokcheck build/t_nfa build/t_dfa build/t_grammar
 	@build/t_rx
 	@build/t_tokcheck
 	@build/t_nfa
 	@build/t_dfa
+	@build/t_grammar
 
 check: build/digits test
 	@build/digits < examples/digits.txt | diff -u examples/digits.expected - \

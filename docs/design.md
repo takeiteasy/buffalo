@@ -29,7 +29,7 @@ cccc's identifier resolver unless that extern arrived via `@shared`.
   whose regex is nullable is rejected here with a `line:col` error. It also
   reads the optional `%grammar` section (see below) — productions, resolved
   terminal/nonterminal symbols, `%start` — with the same `line:col`
-  diagnostics; nothing downstream consumes it yet.
+  diagnostics; `buf_grammar.h` (below) builds LALR(1) parser tables from it.
 - `buf_tokcheck.h` — validate a checked-in `<name>_tokens.h` against
   `%tokens`.
 - `buf_nfa.h` — Thompson construction: regex AST → ε-NFA. One fragment
@@ -66,6 +66,11 @@ cccc's identifier resolver unless that extern arrived via `@shared`.
   (subset construction already lands near the minimal DFA) while adding its
   own `O(passes · nstates · nclass)` pass to the comptime hot path — see
   [performance.md](performance.md).
+- `buf_grammar.h` — LALR(1) parser tables over the `%grammar` section's
+  productions. See [The `.bflo` grammar section](#the-bflo-grammar-section)
+  and [LALR(1) table construction](#lalr1-table-construction) below.
+  Host-test-only for now (`tests/t_grammar.c`) — not yet wired into
+  `src/buf_comptime.c`'s comptime pipeline (follow-on work, see the tracker).
 - `buf_emit.h` — DFA → four file-scope `static const` tables (raw
   `GlobalVarSetInitData` blobs) + the `buf_next` wrapper fn. Unlike the other
   comptime headers this one uses cccc's reflection builtins and is never
@@ -245,9 +250,62 @@ than defaulting to the first production, so reordering productions cannot
 silently change the recognised language. See
 [bflo-format.md](bflo-format.md#grammar-section) for the full syntax.
 
-`buf_rx.h` reads and validates the grammar section; parser table
-construction, the runtime driver, and a worked example are follow-on work
-(see the tracker).
+`buf_rx.h` reads and validates the grammar section; `buf_grammar.h` (below)
+builds LALR(1) parser tables from it. A runtime parser driver and a worked
+example remain follow-on work (see the tracker).
+
+## LALR(1) table construction
+
+`buf_grammar.h` turns a validated `%grammar` section into LALR(1) `action`/
+`goto` tables — the parser-side counterpart to `buf_nfa.h`/`buf_dfa.h` on the
+lexer side, and built the same way: header-only, fixed arenas, no malloc,
+dual-compiled (host `cc` for `tests/t_grammar.c`; not yet wired into the
+comptime pipeline — see [Comptime modules](#comptime-modules) above).
+
+**The augmented grammar.** A synthetic production `S' -> %start` drives the
+closure over the whole automaton and the accept action. It is never written
+into `BufRx` (shared, read-only input) — every production lookup goes
+through an accessor (`buf_lalr_plhs`/`buf_lalr_plen`/`buf_lalr_psym`/...)
+that special-cases the synthetic index `rx->prod_count`.
+
+**Construction method: LR(0) automaton + lookahead propagation to a
+fixpoint** — the classic "spontaneous generation + propagation" LALR method
+(Aho/Sethi/Ullman/Lam, Algorithm 4.62), not canonical LR(1) item sets merged
+by core afterward. Canonical LR(1) is typically 3-6x more states on a
+many-tier expression grammar (each precedence tier is its own nonterminal,
+and LR(1) sees every one with each distinguishing lookahead as a separate
+state before merging) — not worth it given the DFA phase already earned an
+optimisation pass under the comptime VM's ~1000x slowdown. Full
+DeRemer-Pennello lookahead computation (reads/includes relations, SCC via
+Tarjan) is the asymptotically better method but is famously easy to get
+subtly wrong, and buffalo's grammars are small enough that it buys nothing.
+
+The LR(0) automaton itself mirrors `buf_dfa.h` almost exactly: item sets are
+sorted runs of compact `(prod, dot)` item ids in one shared pool
+(`set_off`/`set_len` index into it), an FNV-1a hash over the sorted run
+resolves an existing state instead of an O(nstates) scan, and state ids are
+handed out in worklist discovery order only — determinism, for the same
+reason `buf_dfa.h` needs it.
+
+**Action/goto encoding.** `action[state*ntok+tok]` is a packed `int`: `0`
+error, positive `shift to (value-1)`, `BUF_LALR_ACT_ACCEPT` a dedicated
+sentinel, any other negative `reduce production -(value)-1`. `tok` is the
+*runtime* `TOK_*` value (matching `buf_dfa.h`'s `rule_token[]` convention),
+so a future driver indexes the table directly off what `buf_run` hands it.
+`goto_tab[state*nnonterm+nt]` is a plain state id, or `-1`.
+
+**Conflicts are always a hard error** — shift/reduce or reduce/reduce,
+first-wins, naming the state, the conflicting lookahead token, and the
+reducing production's `line:col`. There is no `%left`/`%right` to fall back
+on (see [The `.bflo` grammar section](#the-bflo-grammar-section)), so a
+conflict always means the grammar is genuinely ambiguous at that point.
+
+**A known LALR limitation.** Because LALR merges LR(0)-core-identical states
+before computing lookaheads, it can report a reduce/reduce conflict that a
+canonical LR(1) automaton over the same grammar would not have. That is
+LALR doing what LALR does, not a buffalo bug — splitting the offending
+nonterminal into two (so the states no longer share an LR(0) core) is the
+usual grammar-level fix.
 
 ## Known limitations
 

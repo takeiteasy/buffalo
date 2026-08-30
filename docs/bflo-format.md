@@ -144,10 +144,11 @@ converts from the slice.
 
 The reader accepts and validates a `%grammar` section: it resolves every
 symbol, checks that the grammar is well-formed, and reports `line:col`
-diagnostics in the same style as the lexer section. **Nothing consumes it
-yet** — there is no parser-table construction or runtime parser driver. A
-`.bflo` file with a `%grammar` section still lexes exactly as it would
-without one.
+diagnostics in the same style as the lexer section. `buf_grammar.h` then
+builds LALR(1) parser tables (action/goto) from it — see
+[design.md](design.md#lalr1-table-construction). There is still no runtime
+parser driver consuming those tables: a `.bflo` file with a `%grammar`
+section lexes exactly as it would without one.
 
 ### `%grammar`
 
@@ -204,3 +205,18 @@ NAME : SYM SYM ... | SYM ... | ... ;
 `%start` written before `%grammar` is rejected with a dedicated message
 (rather than falling through to a generic "unknown directive") since it is
 an easy mistake to make.
+
+`buf_grammar.h`'s own validation and LALR(1) table construction add these
+diagnostics, in the same style:
+
+```
+<spec>:6:1: nonterminal 'dead' is unreachable from %start 'expr'
+<spec>:7:1: nonterminal 'loop' is non-productive (derives no finite string)
+<spec>:24:8: shift/reduce conflict on 'PLUS' in state 12: reduce 'expr' vs. shift
+<spec>:9:1: reduce/reduce conflict in state 4 between 'a' (9:1) and 'b' (11:1) on lookahead 'INT'
+```
+
+A shift/reduce or reduce/reduce conflict is always a hard error — buffalo's
+grammar format has no `%left`/`%right` precedence declarations to resolve
+one silently (see [design.md](design.md#lalr1-table-construction)), so a
+real conflict always means the grammar is ambiguous at that point.

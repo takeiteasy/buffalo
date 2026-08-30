@@ -194,12 +194,7 @@ doing its job). `big.l` shows the file scaling roughly with `nstates·nclass`,
 as expected — a 300-state generated lexer is a ~100 KB file, most of it the
 `next` table.
 
-## Known wrinkle
-
-Every cccc `-c=generated` file carries one dead `BufToken __cccc_tmp0;` local
-in the `buf_next` wrapper, which a warning build flags as unused. It is cccc
-codegen, not buffalo output; the `Makefile` scopes `-Wno-unused-variable` to
-the `.gen.c` translation unit (`GEN_CFLAGS`). Emitted-table *correctness*
-(blob byte order, the `char` class table) is pinned by `make native`'s
-three-way diff — hand-written `build/digits` == generated == one-shot native
-— the only end-to-end check of cccc's string-literal blob round-trip.
+Emitted-table *correctness* (blob byte order, the `char` class table) is
+pinned by `make native`'s three-way diff — hand-written `build/digits` ==
+generated == one-shot native — the only end-to-end check of cccc's
+string-literal blob round-trip.

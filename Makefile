@@ -29,11 +29,6 @@ CC     ?= cc
 CFLAGS ?= -O2 -Wall
 CCCC   ?= cccc
 
-# cccc's Quote() lowering emits a dead `BufToken __cccc_tmp0;` local in the
-# generated buf_next wrapper -- cccc codegen, not buffalo's output. Only the
-# .gen.c translation unit needs the suppression.
-GEN_CFLAGS := $(CFLAGS) -Wno-unused-variable
-
 RT_SRC   := runtime/buf_rt.c
 RT_HDRS  := runtime/buf_rt.h
 CT_HDRS  := include/buffalo/buf_rx.h include/buffalo/buf_tokcheck.h \
@@ -99,12 +94,12 @@ build/%.l.gen.c: examples/%.l examples/%_tokens.h src/buf_comptime.c \
 # Plain-cc build of a lowered spec: .gen.c + runtime + that example's driver.
 build/digits_gen: build/digits.l.gen.c examples/digits_main.c $(RT_SRC) \
                   $(RT_HDRS) examples/digits_tokens.h | build
-	$(CC) $(GEN_CFLAGS) -Iruntime -Iexamples -o $@ \
+	$(CC) $(CFLAGS) -Iruntime -Iexamples -o $@ \
 	    build/digits.l.gen.c examples/digits_main.c $(RT_SRC)
 
 build/calc_gen: build/calc.l.gen.c examples/calc_main.c $(RT_SRC) \
                 $(RT_HDRS) examples/calc_tokens.h | build
-	$(CC) $(GEN_CFLAGS) -Iruntime -Iexamples -o $@ \
+	$(CC) $(CFLAGS) -Iruntime -Iexamples -o $@ \
 	    build/calc.l.gen.c examples/calc_main.c $(RT_SRC)
 
 # One-shot: cccc -c=native lowers spec + runtime + driver to an executable

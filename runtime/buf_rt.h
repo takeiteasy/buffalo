@@ -29,10 +29,8 @@ enum {
 
 /*
  * Both structs carry an explicit tag (`struct BufToken`, `struct BufLexer`)
- * on top of the typedef: cccc's `-c=native` lowering rewrites an anonymous
- * `typedef struct { ... } T;` to a bare `struct T` in the merged translation
- * unit, which is then an incomplete type at every use site. A named tag
- * sidesteps that; it is also plain good C.
+ * on top of the typedef -- plain good C, and no reason to drop it now that
+ * cccc's own anonymous-typedef lowering has been fixed.
  */
 typedef struct BufToken {
     int         kind;    /* TOK_* constant from the checked-in <name>_tokens.h */

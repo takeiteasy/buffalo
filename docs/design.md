@@ -153,12 +153,9 @@ loop exit is already a `return`, but cccc's `-c=native` flow analysis does
 not prove that and rejects a non-void aggregate function that can fall off
 the end. Plain `cc` accepts either form.
 
-### `-c=native` and struct tags
-
 `BufToken` and `BufLexer` carry explicit tags (`typedef struct BufToken {…}
-BufToken;`). cccc's `-c=native` lowering rewrites an anonymous `typedef
-struct {…} T;` to a bare `struct T` in the merged translation unit, which is
-then an incomplete type at every use site. A named tag sidesteps it.
+BufToken;`) — plain good C, kept regardless of what cccc's own lowering does
+with an anonymous typedef.
 
 ## Comptime VM gotchas
 

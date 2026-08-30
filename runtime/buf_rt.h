@@ -90,6 +90,103 @@ BufToken buf_run(BufLexer *lx,
                  int nclass,
                  int start);
 
+/*
+ * LALR(1) action-table encoding. Must track buf_grammar.h's BUF_LALR_ACT_*
+ * macros exactly (cross-checked by a static assert in tests/t_parse.c) --
+ * kept as an independent copy here rather than #include-ing the comptime
+ * header, the same way BUF_TOK_FIRST_USER / BUF_LALR_FIRST_USER_TOK /
+ * BUF_DFA_FIRST_USER_TOK are three independent copies of one invariant.
+ */
+#define BUF_PARSE_ACT_ERROR      0
+#define BUF_PARSE_ACT_ACCEPT     (-1000000)
+#define BUF_PARSE_IS_SHIFT(v)    ((v) > 0)
+#define BUF_PARSE_IS_REDUCE(v)   ((v) < 0 && (v) != BUF_PARSE_ACT_ACCEPT)
+#define BUF_PARSE_SHIFT_STATE(v) ((v) - 1)
+#define BUF_PARSE_REDUCE_PROD(v) (-(v) - 1)
+
+/*
+ * Concrete syntax tree node, built by buf_parse into a caller-owned flat
+ * pool -- children are pool indices (BufParser.child[]), not pointers, so
+ * the whole tree lives in arrays the caller sized and owns, no allocation
+ * inside buf_rt.c.
+ */
+typedef struct BufCstNode {
+    int      is_terminal; /* 1: `index` is a TOK_* kind; 0: a nonterminal index */
+    int      index;       /* leaf: TOK_* kind; interior: prod_lhs[prod] */
+    int      prod;        /* interior: production index; -1 on a leaf */
+    BufToken token;        /* leaf only; unused on an interior node */
+    int      line, col;    /* 1-based. Interior: inherited from the leftmost
+                             * child, or (on an epsilon reduce, 0 children)
+                             * the position of the current lookahead. */
+    int      child_off;    /* interior only: offset into BufParser.child[] */
+    int      nchild;       /* interior only; 0 on a leaf or an epsilon reduce */
+} BufCstNode;
+
+/* buf_parse outcome. BUF_PARSE_OK on success; anything else means the
+ * driver stopped early and BufParser.status/error_tok/error_state say why. */
+enum {
+    BUF_PARSE_OK             = 0,
+    BUF_PARSE_ERR_SYNTAX     = 1, /* action[state][lookahead] had no entry */
+    BUF_PARSE_ERR_NODE_POOL  = 2, /* nodes[] exhausted */
+    BUF_PARSE_ERR_CHILD_POOL = 3, /* child[] exhausted */
+    BUF_PARSE_ERR_STACK      = 4  /* state_stack[]/node_stack[] exhausted */
+};
+
+typedef struct BufParser { /* concrete: caller stack-allocates storage and
+                             * `BufParser ps;`, then calls buf_parser_init */
+    BufCstNode *nodes;        int node_cap,  node_used;
+    int        *child;        int child_cap, child_used;
+    int        *state_stack;
+    int        *node_stack;   int stack_cap;
+
+    int      status;      /* BUF_PARSE_OK on success */
+    BufToken error_tok;    /* offending lookahead, when status == ERR_SYNTAX */
+    int      error_state;  /* LR state with no action, when status == ERR_SYNTAX */
+} BufParser;
+
+void buf_parser_init(BufParser *ps,
+                     BufCstNode *nodes, int node_cap,
+                     int *child, int child_cap,
+                     int *state_stack, int *node_stack, int stack_cap);
+
+/*
+ * Generic LALR(1) shift/reduce driver, building a concrete syntax tree.
+ * Lives in buf_rt.c and is never emitted, same as buf_run. Drives buf_run
+ * itself for each lookahead token, over the DFA tables (cls..start_dfa,
+ * same contract as buf_run) and the LALR(1) tables buf_grammar.h builds:
+ *
+ *   action      [nstates * ntok], BUF_LALR_ACT_*-encoded (buf_grammar.h).
+ *               `int`, not `short` -- BUF_LALR_ACT_ACCEPT doesn't fit short.
+ *   goto_tab    [nstates * nnonterm]; next state on a nonterminal, or -1.
+ *   prod_lhs    [nprods] -> nonterminal index, i.e. buf_lalr_plhs(rx, p)
+ *               baked flat by the caller (buf_parse cannot take a BufRx*:
+ *               it's a comptime-only fixed arena, not a runtime type).
+ *   prod_len    [nprods] -> RHS length, i.e. buf_lalr_plen(rx, p), likewise
+ *               baked flat by the caller.
+ *   ntok, nnonterm, start_state as in BufGrammar.
+ *
+ * Returns the root node's index into ps->nodes on success, or -1 on failure
+ * (ps->status says why). A BUF_TOK_ERROR lookahead from buf_run has no
+ * action[] entry and is reported like any other unexpected token --
+ * ps->error_tok.kind == BUF_TOK_ERROR distinguishes it from a rejected but
+ * otherwise well-formed token.
+ */
+int buf_parse(BufParser *ps, BufLexer *lx,
+             const unsigned char *cls,
+             const short *next,
+             const short *accept,
+             const short *rule_token,
+             int nstates_dfa,
+             int nclass,
+             int start_dfa,
+             const int *action,
+             const int *goto_tab,
+             const int *prod_lhs,
+             const int *prod_len,
+             int ntok,
+             int nnonterm,
+             int start_state);
+
 #ifdef __cplusplus
 }
 #endif

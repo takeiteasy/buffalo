@@ -73,12 +73,16 @@ build/t_dfa: tests/t_dfa.c $(CT_HDRS) $(RT_SRC) $(RT_HDRS) | build
 build/t_grammar: tests/t_grammar.c $(CT_HDRS) $(RT_SRC) $(RT_HDRS) | build
 	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_grammar.c $(RT_SRC)
 
-test: build/t_rx build/t_tokcheck build/t_nfa build/t_dfa build/t_grammar
+build/t_parse: tests/t_parse.c $(CT_HDRS) $(RT_SRC) $(RT_HDRS) | build
+	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_parse.c $(RT_SRC)
+
+test: build/t_rx build/t_tokcheck build/t_nfa build/t_dfa build/t_grammar build/t_parse
 	@build/t_rx
 	@build/t_tokcheck
 	@build/t_nfa
 	@build/t_dfa
 	@build/t_grammar
+	@build/t_parse
 
 check: build/digits test
 	@build/digits < examples/digits.txt | diff -u examples/digits.expected - \

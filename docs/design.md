@@ -251,8 +251,9 @@ silently change the recognised language. See
 [bflo-format.md](bflo-format.md#grammar-section) for the full syntax.
 
 `buf_rx.h` reads and validates the grammar section; `buf_grammar.h` (below)
-builds LALR(1) parser tables from it. A runtime parser driver and a worked
-example remain follow-on work (see the tracker).
+builds LALR(1) parser tables from it; `buf_parse` (below) drives those
+tables at runtime. A worked example and comptime-pipeline wiring for
+`buf_grammar.h` remain follow-on work (see the tracker).
 
 ## LALR(1) table construction
 
@@ -299,6 +300,66 @@ first-wins, naming the state, the conflicting lookahead token, and the
 reducing production's `line:col`. There is no `%left`/`%right` to fall back
 on (see [The `.bflo` grammar section](#the-bflo-grammar-section)), so a
 conflict always means the grammar is genuinely ambiguous at that point.
+Because conflicts are rejected at table-construction time, `buf_parse`
+(below) never needs conflict-resolution logic — every populated `action[]`
+cell it reads is unambiguous by construction.
+
+## The parser driver: `buf_parse`
+
+`buf_parse(ps, lx, ...)` is the generic LALR(1) shift/reduce driver, the
+parser-side counterpart to `buf_run`: hand-written in `buf_rt.c`, never
+emitted, driving `buf_run` itself for each lookahead token.
+
+- Parallel `state_stack`/`node_stack` arrays (caller-provided, like
+  `BufLexer`'s stack-allocated storage — no allocation inside `buf_rt.c`);
+  `BufParser` also takes a caller-sized `BufCstNode` pool and a `child[]`
+  pool for the tree it builds.
+- Decode `action[state * ntok + lookahead.kind]` with the `BUF_PARSE_ACT_*`
+  macros: `0` is error, `BUF_PARSE_ACT_ACCEPT` accepts, positive shifts,
+  any other negative reduces production `-(value)-1`.
+- **Shift** allocates a leaf `BufCstNode` (`is_terminal = 1`, carrying the
+  `BufToken`), pushes the new state, fetches the next lookahead.
+- **Reduce** pops `prod_len[p]` stack entries into the child pool, allocates
+  an interior node (`is_terminal = 0`, `index = prod_lhs[p]`, `nchild =
+  prod_len[p]`), then pushes `goto_tab[state * nnonterm + prod_lhs[p]]`. An
+  interior node's `line:col` is its leftmost child's; on an **epsilon
+  reduce** (`prod_len[p] == 0`, no children to inherit from) it's the
+  current lookahead's position instead.
+- **Accept** returns the node under the stack top — the CST root.
+- On failure (`status != BUF_PARSE_OK`), `error_tok`/`error_state` say what
+  the offending lookahead and LR state were; a `BUF_TOK_ERROR` lookahead
+  from `buf_run` is reported the same way as any other token with no
+  `action[]` entry.
+
+**Why `buf_parse` cannot take a `BufRx *`.** `BufRx` is a comptime-only,
+megabyte-scale fixed-arena struct, not a runtime type — `buf_rt.c` never
+links against it. So instead of calling `buf_lalr_plhs`/`buf_lalr_plen`
+directly, `buf_parse` takes two flat arrays the caller bakes from those
+accessors ahead of time: `prod_lhs[nprods]` and `prod_len[nprods]`, the
+runtime-side counterpart to `buf_dfa.h`'s `rule_token[]`. `buf_lalr_psym`
+isn't needed by the driver at all — a reduce's popped stack entries already
+*are* its children.
+
+**`action[]` is `int`, not `short`.** Unlike `buf_run`'s DFA tables,
+`BufGrammar.action` must be `int` because `BUF_LALR_ACT_ACCEPT ==
+-1000000` doesn't fit a `short`.
+
+**`BUF_PARSE_ACT_*` is an independent copy of `buf_grammar.h`'s
+`BUF_LALR_ACT_*` encoding**, not a `#include` of the comptime header —
+`buf_rt.h` cannot depend on `buf_grammar.h` any more than it can depend on
+`BufRx`. Cross-checked by a static assert in `tests/t_parse.c`, the same
+pattern as the `BUF_TOK_FIRST_USER` / `BUF_LALR_FIRST_USER_TOK` /
+`BUF_DFA_FIRST_USER_TOK` triple.
+
+**Errors are struct fields, not a formatted string.** `buf_rt.c` has no
+`<stdio.h>`/`snprintf` — unlike the comptime headers' sticky `error[]`
+string convention (`buf_rx.h`/`buf_dfa.h`/`buf_grammar.h`), `BufParser`
+reports failure via `status` (a `BUF_PARSE_ERR_*` enum) plus `error_tok`/
+`error_state`, matching how `buf_run` itself reports a lex error as data
+(`BUF_TOK_ERROR`) rather than an out-of-band message.
+
+`buf_parse` carries the same unreachable tail `return` after its `for
+(;;)` that `buf_run` does, for the same `-c=native` flow-analysis reason.
 
 **A known LALR limitation.** Because LALR merges LR(0)-core-identical states
 before computing lookaheads, it can report a reduce/reduce conflict that a
@@ -306,6 +367,24 @@ canonical LR(1) automaton over the same grammar would not have. That is
 LALR doing what LALR does, not a buffalo bug — splitting the offending
 nonterminal into two (so the states no longer share an LR(0) core) is the
 usual grammar-level fix.
+
+**Bug fixed in this round: epsilon productions never reduced.**
+`buf_lalr_closure1`'s lookahead-propagation pass only wrote `la_pool` for
+closure items with a symbol after the dot (`d < L`), so it could forward a
+lookahead to a *successor* state's kernel item. A completed item produced
+purely by closure — e.g. the reduce item for an epsilon production such as
+`args : | INT args ;` — has no successor to shift/goto into; its lookahead
+belongs on its own `la_pool` slot in the *current* state. The old code hit
+`if (d >= L) continue;` and silently dropped it, so `buf_lalr_fill_reduces`
+never saw a lookahead bit and never installed the reduce action — nullable
+productions built a table that could never actually reduce them. Fixed by
+handling the `d >= L` case explicitly: find the item's own slot in the
+current state via `buf_lalr_find_item(g, state, t)` and write the
+spontaneous bits / propagation edge there instead of skipping it. Caught by
+`buf_parse`'s epsilon-production test (`tests/t_parse.c`), which is the
+first thing to actually *run* an LALR table end-to-end against a nullable
+grammar — `tests/t_grammar.c`'s own epsilon test only checked that a
+non-trivial automaton got built, not that it recognised anything.
 
 ## Known limitations
 

@@ -11,8 +11,9 @@ generated file.
 - **lex** — `.bflo` spec (`%tokens` + `NAME regex` rules) → DFA tables + a
   `buf_next()` driver.
 - **parse** — a `%grammar` section in the same `.bflo` file, read and
-  validated by the spec reader. *(Parser table construction, the runtime
-  driver, and the `buffalo parse` command are not implemented yet.)*
+  validated by the spec reader, compiled to LALR(1) tables, and driven at
+  runtime by `buf_parse` into a concrete syntax tree. *(Comptime-pipeline
+  wiring and the `buffalo parse` command are not implemented yet.)*
 
 ## Build
 

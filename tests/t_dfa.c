@@ -249,6 +249,7 @@ static void test_determinism_of(const char *path)
 static void test_determinism(void)
 {
     test_determinism_of("examples/clike.l");
+    test_determinism_of("examples/json.l");
     test_determinism_of("examples/big.l");
 }
 
@@ -306,6 +307,8 @@ static void test_minimize(void)
 {
     min_pair("examples/calc.l",  "1 + 2.5 * foo\n(a )# c\nbar");
     min_pair("examples/clike.l", "if (x->y) { return 42; } /* c */ // z\niffy");
+    min_pair("examples/json.l",
+             "{\"a\": [1, -2.5e1, true, false, null], \"b\": \"c\\u00e9\"}");
     min_pair("examples/big.l",
              "int x = 0xFF; float y = 3.14e2;\n"
              "if (x >= y) x <<= 1; // done\nreturn \"hi\";\n");

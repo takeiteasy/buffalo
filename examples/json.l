@@ -1,0 +1,19 @@
+# json.l -- RFC 8259 lexer spec, the M5 stress case for escapes and optional
+# groups (STRING's \uXXXX, NUMBER's fraction/exponent). Lines starting with
+# '#' are comments. Blank lines are ignored.
+
+%tokens LBRACE RBRACE LBRACKET RBRACKET COLON COMMA STRING NUMBER TRUE FALSE NULL
+
+STRING    "\"" ([^"\\\n] | \\ ["\\/bfnrt] | \\ u [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])* "\""
+NUMBER    -? (0|[1-9][0-9]*) (\.[0-9]+)? ([eE][+-]?[0-9]+)?
+TRUE      "true"
+FALSE     "false"
+NULL      "null"
+LBRACE    "{"
+RBRACE    "}"
+LBRACKET  "["
+RBRACKET  "]"
+COLON     ":"
+COMMA     ","
+
+%skip     [ \t\r\n]+

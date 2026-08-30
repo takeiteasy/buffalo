@@ -15,15 +15,17 @@
 #
 # t_dfa also links runtime/buf_rt.c and drives the real buf_run over the
 # freshly built tables. The `spec` target runs the full comptime pipeline over
-# both reference specs; `check` invokes it -- plus the `generated` and
+# every reference spec; `check` invokes it -- plus the `generated` and
 # `native` parity targets -- but skips all three with a notice when cccc is
 # not on PATH. `bench` is the M3 per-phase cost measurement.
 #
 # `generated` lowers a spec to a .gen.c with `bin/buffalo lex` (cccc
 # -c=generated) then builds it with a plain cc against the runtime and an
 # example _main.c. `native` does the whole thing in one cccc -c=native
-# invocation. Both must produce byte-identical output to each other and to
-# the hand-written build/digits reference.
+# invocation. Both must produce byte-identical output to each other, and (for
+# digits, the one example with a hand-written reference table file) to
+# build/digits too. EXAMPLES lists the M5 example suite; big.l stays out of
+# it -- it's the M3 bench/stress fixture, not a worked example.
 
 CC     ?= cc
 CFLAGS ?= -O2 -Wall
@@ -34,8 +36,10 @@ RT_HDRS  := runtime/buf_rt.h
 CT_HDRS  := include/buffalo/buf_rx.h include/buffalo/buf_tokcheck.h \
             include/buffalo/buf_nfa.h include/buffalo/buf_dfa.h
 
+EXAMPLES := digits calc clike json
+
 .PHONY: all check test spec generated native bench clean
-.PRECIOUS: build/digits build/digits_gen build/digits_native build/calc_gen
+.PRECIOUS: build/digits $(EXAMPLES:%=build/%_gen) $(EXAMPLES:%=build/%_native)
 
 all: build/digits
 
@@ -74,14 +78,15 @@ check: build/digits test
 	    && $(MAKE) --no-print-directory spec generated native \
 	    || echo "skip spec/generated/native (no cccc on PATH)"
 
-# Run the full comptime pipeline over both reference specs. Needs cccc on PATH
-# (or $CCCC): it reads the spec, validates the token header, builds the NFA
-# then the DFA, and emits the four tables + the buf_next wrapper into the
+# Run the full comptime pipeline over every reference spec. Needs cccc on
+# PATH (or $CCCC): it reads the spec, validates the token header, builds the
+# NFA then the DFA, and emits the four tables + the buf_next wrapper into the
 # .gen.c. clike.l is the ~40-rule stress case -- keep it here so a comptime
 # regression on the big spec is caught by `make check`.
 spec: | build
 	@bin/buffalo lex examples/calc.l  -o build/calc.l.gen.c  && echo "ok   spec calc"
 	@bin/buffalo lex examples/clike.l -o build/clike.l.gen.c && echo "ok   spec clike"
+	@bin/buffalo lex examples/json.l  -o build/json.l.gen.c  && echo "ok   spec json"
 
 # -- generated / native parity ------------------------------------------------
 #
@@ -92,47 +97,50 @@ build/%.l.gen.c: examples/%.l examples/%_tokens.h src/buf_comptime.c \
 	@bin/buffalo lex examples/$*.l -o $@
 
 # Plain-cc build of a lowered spec: .gen.c + runtime + that example's driver.
-build/digits_gen: build/digits.l.gen.c examples/digits_main.c $(RT_SRC) \
-                  $(RT_HDRS) examples/digits_tokens.h | build
+build/%_gen: build/%.l.gen.c examples/%_main.c $(RT_SRC) $(RT_HDRS) \
+             examples/%_tokens.h | build
 	$(CC) $(CFLAGS) -Iruntime -Iexamples -o $@ \
-	    build/digits.l.gen.c examples/digits_main.c $(RT_SRC)
-
-build/calc_gen: build/calc.l.gen.c examples/calc_main.c $(RT_SRC) \
-                $(RT_HDRS) examples/calc_tokens.h | build
-	$(CC) $(CFLAGS) -Iruntime -Iexamples -o $@ \
-	    build/calc.l.gen.c examples/calc_main.c $(RT_SRC)
+	    build/$*.l.gen.c examples/$*_main.c $(RT_SRC)
 
 # One-shot: cccc -c=native lowers spec + runtime + driver to an executable
 # in a single invocation, no intermediate .gen.c. BUF_STOP_AFTER=5 must be a
 # -D (the source #define fallback is not forwarded into the comptime body) --
 # bin/buffalo passes it on the generated path; here it is explicit.
-build/digits_native: src/buf_comptime.c examples/digits_main.c $(RT_SRC) \
-                     include/buffalo/buf_emit.h $(CT_HDRS) $(RT_HDRS) \
-                     examples/digits.l examples/digits_tokens.h | build
-	$(CCCC) -c=native src/buf_comptime.c $(RT_SRC) examples/digits_main.c \
+build/%_native: src/buf_comptime.c examples/%_main.c $(RT_SRC) \
+                include/buffalo/buf_emit.h $(CT_HDRS) $(RT_HDRS) \
+                examples/%.l examples/%_tokens.h | build
+	$(CCCC) -c=native src/buf_comptime.c $(RT_SRC) examples/$*_main.c \
 	    -Iinclude/buffalo -Iruntime -Iexamples \
-	    -D BUF_SPEC='"examples/digits.l"' -D BUF_STOP_AFTER=5 -o $@
+	    -D BUF_SPEC='"examples/$*.l"' -D BUF_STOP_AFTER=5 -o $@
 
-# generated: build the lowered specs with a plain cc; digits also runs its
-# golden diff. calc is compile+link only until M5 adds calc.expected.
-generated: build/digits_gen build/calc_gen
-	@build/digits_gen < examples/digits.txt | diff -u examples/digits.expected - \
-	    && echo "ok   generated digits" \
-	    || { echo "FAIL generated digits"; exit 1; }
-	@echo "ok   generated calc (compile+link)"
+# generated: build every example's lowered spec with a plain cc and run its
+# golden diff.
+generated: $(EXAMPLES:%=build/%_gen)
+	@for e in $(EXAMPLES); do \
+	    build/$${e}_gen < examples/$${e}.txt | diff -u examples/$${e}.expected - \
+	        && echo "ok   generated $$e" \
+	        || { echo "FAIL generated $$e"; exit 1; }; \
+	done
 
-# native: the one-shot cccc path. Must match its own golden output *and* be
-# byte-identical to both the generated build and the hand-written reference
-# (the roadmap's three-way parity requirement).
-native: build/digits_native build/digits_gen build/digits
-	@build/digits_native < examples/digits.txt | diff -u examples/digits.expected - \
-	    && echo "ok   native digits" \
-	    || { echo "FAIL native digits"; exit 1; }
+# native: the one-shot cccc path. Every example must match its own golden
+# output *and* be byte-identical to the generated build; digits additionally
+# has a hand-written reference (build/digits) for a three-way parity check.
+native: $(EXAMPLES:%=build/%_native) $(EXAMPLES:%=build/%_gen) build/digits
+	@for e in $(EXAMPLES); do \
+	    build/$${e}_native < examples/$${e}.txt | diff -u examples/$${e}.expected - \
+	        && echo "ok   native $$e" \
+	        || { echo "FAIL native $$e"; exit 1; }; \
+	    a=$$(build/$${e}_gen    < examples/$${e}.txt); \
+	    b=$$(build/$${e}_native < examples/$${e}.txt); \
+	    [ "$$a" = "$$b" ] \
+	        && echo "ok   parity generated == native ($$e)" \
+	        || { echo "FAIL generated/native parity ($$e)"; exit 1; }; \
+	done
 	@a=$$(build/digits        < examples/digits.txt); \
 	 b=$$(build/digits_gen    < examples/digits.txt); \
 	 c=$$(build/digits_native < examples/digits.txt); \
 	 [ "$$a" = "$$b" ] && [ "$$b" = "$$c" ] \
-	    && echo "ok   parity hand-written == generated == native" \
+	    && echo "ok   parity hand-written == generated == native (digits)" \
 	    || { echo "FAIL three-way parity"; exit 1; }
 
 # M3 spike: per-phase comptime cost of the pipeline (the BUF_STOP_AFTER

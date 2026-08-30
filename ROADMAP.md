@@ -122,13 +122,26 @@ Result (aarch64-darwin, cccc 0.1.0, `-O2`; measured on `clike.l` — 45 rules,
   `-c=native` lowers an anonymous `typedef struct {…} T;` to an incomplete
   `struct T`).
 
-### M5 — example suite + parity
+### M5 — example suite + parity — **done**
 
-- Complete the `calc` example (`calc.expected` + its golden diff; `calc_main.c`
-  landed in M4) and add `json` and `clike` (`.l`, `_tokens.h`, `_main.c`,
-  `.expected` each).
-- Extend the `generated` / `native` targets past `digits` to every example,
-  each with a byte-identical generated-vs-native diff.
+- Completed the `calc` example (`calc.txt` + `calc.expected`; `calc_main.c`
+  landed in M4) and added `clike` (`clike_main.c`, `clike.txt`,
+  `clike.expected` — `clike.l` / `clike_tokens.h` landed at M2) and `json`
+  (`.l`, `_tokens.h`, `_main.c`, `.txt`, `.expected`, all new). `json.l`
+  covers RFC 8259's escapes (`\uXXXX` as four explicit hex classes — `{n,m}`
+  isn't in the regex grammar) and NUMBER's optional fraction/exponent groups.
+  `clike.txt` exercises keyword-vs-IDENT ties, longest-match operators, and a
+  block comment spanning a newline (line counting survives a multi-line
+  skip).
+- `Makefile`'s `generated` / `native` targets are pattern rules
+  (`build/%_gen`, `build/%_native`) driven by an `EXAMPLES` list, replacing
+  the M4 rules hand-written for `digits`/`calc` alone. Every example gets a
+  golden diff and a generated-vs-native byte diff; `digits` additionally
+  keeps its three-way diff against the hand-written `build/digits` reference,
+  since it is the only example with one. `big.l` stays out of `EXAMPLES` — a
+  bench/stress fixture, not a worked example.
+- `tests/t_dfa.c`'s determinism and minimisation-parity suites gained
+  `examples/json.l` alongside `clike.l` / `big.l`.
 
 ### M6 — docs pass
 

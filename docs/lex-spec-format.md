@@ -1,6 +1,7 @@
 # The `.l` lexer spec format
 
 > Reference for the `.l` reader. `examples/calc.l` is the small worked example;
+> `examples/json.l` is a mid-sized one exercising escapes and optional groups;
 > `examples/clike.l` is a ~40-rule one.
 
 ```

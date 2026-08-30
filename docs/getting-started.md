@@ -97,13 +97,13 @@ $ bin/buffalo lex examples/calc.l [-o OUT.gen.c] [--tokens TOK.h]
 
 From M4 on there are two ways to get from a `.l` spec to a program, and they
 must produce byte-identical output. `make generated` and `make native` run
-both over `digits` (extended to every example in M5); `make check` invokes
-them under a no-cccc skip gate.
+both over every example in the suite — `digits`, `calc`, `clike`, `json`;
+`make check` invokes them under a no-cccc skip gate.
 
 ```sh
-make generated   # bin/buffalo lex -> .gen.c, then plain cc; runs the digits golden diff
-make native      # one cccc -c=native invocation; three-way diff vs. generated and the
-                 # hand-written build/digits
+make generated   # bin/buffalo lex -> .gen.c, then plain cc; golden diff per example
+make native      # one cccc -c=native invocation per example; generated/native parity
+                 # diff, plus a three-way diff against the hand-written build/digits
 ```
 
 The underlying invocations, for `digits`:

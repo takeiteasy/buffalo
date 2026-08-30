@@ -1,0 +1,13 @@
+// line comment
+int iffy(struct Foo *p) {
+    if (p->x <= 10 && p->y >= -1) {
+        p->x++;
+        p->y--;
+    } /* a block
+         comment spanning
+         a newline */
+    return p->x != p->y;
+}
+char c = 'a';
+char *s = "line\nend";
+int bad = 5 $ 3;

@@ -1,0 +1,17 @@
+IDENT  "foo" 2:1
+STAR   "*" 2:5
+LPAREN "(" 2:7
+IDENT  "bar" 2:8
+PLUS   "+" 2:12
+FLOAT  "3.14" 2:14
+RPAREN ")" 2:18
+INT    "1" 3:1
+PLUS   "+" 3:3
+INT    "2" 3:5
+IDENT  "x9" 4:1
+STAR   "*" 4:4
+INT    "10" 4:6
+INT    "5" 5:1
+ERROR  "@" 5:3
+INT    "6" 5:5
+EOF    "" 6:1

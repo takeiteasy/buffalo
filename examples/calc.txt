@@ -1,0 +1,5 @@
+# a calc example: floats beat ints, comments and whitespace are skipped
+foo * (bar + 3.14)
+1 + 2
+x9 * 10 # trailing comment
+5 @ 6

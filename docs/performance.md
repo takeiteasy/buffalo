@@ -170,6 +170,11 @@ real means the `buf_dfa_partition` sweep, not minimisation.
 | transition table (`nstates·nclass`) | 262144 | 3655 | 24624 |
 | state-set pool | 65536 | 477 | 2157 |
 
+The `%grammar` section's arenas (`BUF_RX_MAX_NONTERMS` 128, `BUF_RX_MAX_PRODS`
+512, `BUF_RX_MAX_SYMS` 2048) are not in the table above: neither `clike.bflo`
+nor `big.bflo` has a grammar section, so there is no measured peak yet, and
+the section is inert for lexer cost — it does not touch `buf_nfa.h`/`buf_dfa.h`.
+
 `big.bflo` at 103 rules first exposed `BUF_RX_MAX_RULES` at its old value of 128;
 it is now 256, matching `BUF_RX_MAX_TOKENS` (every `%tokens` entry needs a
 rule, plus the `%skip` rules — so the rule cap must be `>=` the token cap).

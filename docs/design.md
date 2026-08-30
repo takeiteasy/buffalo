@@ -26,7 +26,10 @@ cccc's identifier resolver unless that extern arrived via `@shared`.
 - `buf_rx.h` — spec-file + regex reader: `.bflo` text → regex AST,
   `line:col` per node. Character classes are desugared into a 256-bit byte set
   at parse time (so alphabet partitioning is a set-grouping pass). A rule
-  whose regex is nullable is rejected here with a `line:col` error.
+  whose regex is nullable is rejected here with a `line:col` error. It also
+  reads the optional `%grammar` section (see below) — productions, resolved
+  terminal/nonterminal symbols, `%start` — with the same `line:col`
+  diagnostics; nothing downstream consumes it yet.
 - `buf_tokcheck.h` — validate a checked-in `<name>_tokens.h` against
   `%tokens`.
 - `buf_nfa.h` — Thompson construction: regex AST → ε-NFA. One fragment
@@ -225,6 +228,26 @@ path by replacing a trailing `.bflo` with `_tokens.h` (`calc.bflo` →
 `calc_tokens.h`), overridable with `buffalo lex --tokens PATH` (which the
 wrapper forwards as `-D BUF_TOKENS_H`). `src/buf_comptime.c` does the
 derivation when `BUF_TOKENS_H` is undefined.
+
+## The `.bflo` grammar section
+
+The grammar lives in the **same `.bflo` file** as the lexer spec, opened by a
+`%grammar` directive that runs to end of file (the ANTLR model) — not a
+separate `.y` file paired with the `.bflo` (the yacc model). `lex` and
+`parse` are subcommands of one tool over one file format, so there is no
+reason to split the spec across two files; a combined grammar also lets
+productions reference the same `%tokens` vocabulary without an import
+mechanism.
+
+Terminal-vs-nonterminal is resolved implicitly against `%tokens` (no
+`%nonterm` declaration list to keep in sync), and `%start` is required rather
+than defaulting to the first production, so reordering productions cannot
+silently change the recognised language. See
+[bflo-format.md](bflo-format.md#grammar-section) for the full syntax.
+
+`buf_rx.h` reads and validates the grammar section; parser table
+construction, the runtime driver, and a worked example are follow-on work
+(see the tracker).
 
 ## Known limitations
 

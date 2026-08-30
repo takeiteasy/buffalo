@@ -10,8 +10,9 @@ generated file.
 
 - **lex** — `.bflo` spec (`%tokens` + `NAME regex` rules) → DFA tables + a
   `buf_next()` driver.
-- **parse** — grammar productions in the same `.bflo` file → parser tables.
-  *(Not implemented yet.)*
+- **parse** — a `%grammar` section in the same `.bflo` file, read and
+  validated by the spec reader. *(Parser table construction, the runtime
+  driver, and the `buffalo parse` command are not implemented yet.)*
 
 ## Build
 
@@ -28,7 +29,7 @@ make bench      # per-phase comptime-cost measurement (needs cccc + perl)
 
 - [docs/design.md](docs/design.md) — the two-universe split, decision log, known limitations.
 - [docs/performance.md](docs/performance.md) — the comptime-cost measurement and how to re-run it.
-- [docs/lex-spec-format.md](docs/lex-spec-format.md) — the `.bflo` spec reference.
+- [docs/bflo-format.md](docs/bflo-format.md) — the `.bflo` spec reference (lexer + grammar sections).
 - [docs/getting-started.md](docs/getting-started.md) — building a spec end to end.
 
 ## License

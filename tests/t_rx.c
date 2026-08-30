@@ -2,7 +2,8 @@
  * t_rx.c -- host unit tests for include/buffalo/buf_rx.h.
  *
  * Plain `cc`, no cccc. Exercises the .bflo spec layer, the regex grammar, the
- * per-node line:col tracking, and the empty-match (nullable) rejection.
+ * %grammar section (productions, %start, terminal/nonterminal resolution),
+ * the per-node line:col tracking, and the empty-match (nullable) rejection.
  */
 #include <stdio.h>
 #include <string.h>
@@ -152,6 +153,101 @@ static void test_grammar_shapes(void)
           "space between atoms concatenates (comment pattern)");
 }
 
+/* Reference calc-shaped spec: %tokens/rules identical to examples/calc.bflo,
+ * plus a %grammar section for expr/term/factor. */
+static const char *calc_grammar_spec =
+    "%tokens INT PLUS STAR LPAREN RPAREN\n"
+    "\n"
+    "INT       [0-9]+\n"
+    "PLUS      \"+\"\n"
+    "STAR      \"*\"\n"
+    "LPAREN    \"(\"\n"
+    "RPAREN    \")\"\n"
+    "\n"
+    "%skip     [ \\t\\r\\n]+\n"
+    "\n"
+    "%grammar\n"
+    "%start expr\n"
+    "\n"
+    "expr : expr PLUS term\n"
+    "     | term\n"
+    "     ;\n"
+    "\n"
+    "term : term STAR factor\n"
+    "     | factor\n"
+    "     ;\n"
+    "\n"
+    "factor : LPAREN expr RPAREN\n"
+    "       | INT\n"
+    "       ;\n";
+
+static void test_grammar_section(void)
+{
+    int rc;
+
+    /* regression: no %grammar section still parses exactly as before */
+    rc = buf_rx_parse_string(&rx, "<t>", "%tokens A\nA a\n");
+    CHECK(rc == 0, "spec without %grammar still parses");
+    CHECK(rx.has_grammar == 0, "no %grammar -> has_grammar is 0");
+    CHECK(rx.start_nt == -1, "no %grammar -> start_nt is -1");
+
+    rc = buf_rx_parse_string(&rx, "<t>", calc_grammar_spec);
+    CHECK(rc == 0, "calc-shaped grammar spec parses cleanly");
+    if (rc != 0) { printf("  -> %s\n", rx.error); return; }
+
+    CHECK(rx.has_grammar == 1, "has_grammar is set");
+    CHECK(rx.nonterm_count == 3, "expr/term/factor -> 3 nonterminals");
+    CHECK(rx.start_nt >= 0 &&
+              strcmp(rx.nonterms[rx.start_nt].name, "expr") == 0,
+          "%start resolves to 'expr'");
+    CHECK(rx.prod_count == 6, "6 alternatives across 3 productions");
+
+    /* prod 0: expr : expr PLUS term  (left-recursive, multi-symbol rhs) */
+    CHECK(strcmp(rx.nonterms[rx.prods[0].lhs].name, "expr") == 0,
+          "prod 0 lhs is expr");
+    CHECK(rx.prods[0].rhs_len == 3, "prod 0 has 3 rhs symbols");
+    {
+        BufSym *s0 = &rx.syms[rx.prods[0].rhs_start + 0];
+        BufSym *s1 = &rx.syms[rx.prods[0].rhs_start + 1];
+        BufSym *s2 = &rx.syms[rx.prods[0].rhs_start + 2];
+        CHECK(!s0->is_terminal &&
+                  strcmp(rx.nonterms[s0->index].name, "expr") == 0,
+              "prod 0 rhs[0] is nonterminal expr");
+        CHECK(s1->is_terminal && strcmp(rx.tokens[s1->index], "PLUS") == 0,
+              "prod 0 rhs[1] is terminal PLUS");
+        CHECK(!s2->is_terminal &&
+                  strcmp(rx.nonterms[s2->index].name, "term") == 0,
+              "prod 0 rhs[2] is nonterminal term");
+    }
+
+    /* prod 5: factor : INT (single-symbol alternative) */
+    CHECK(rx.prods[5].rhs_len == 1, "prod 5 has 1 rhs symbol");
+    CHECK(rx.syms[rx.prods[5].rhs_start].is_terminal &&
+              strcmp(rx.tokens[rx.syms[rx.prods[5].rhs_start].index], "INT") == 0,
+          "prod 5 rhs[0] is terminal INT");
+
+    /* epsilon alternative */
+    rc = buf_rx_parse_string(&rx, "<t>",
+                             "%tokens INT\nINT [0-9]+\n%grammar\n"
+                             "%start expr\nexpr : INT | ;\n");
+    CHECK(rc == 0, "epsilon alternative parses");
+    CHECK(rc == 0 && rx.prod_count == 2, "epsilon alt still 2 productions");
+    CHECK(rc == 0 && rx.prods[1].rhs_len == 0, "epsilon alt has rhs_len 0");
+
+    /* classification is exact-match, not case-folded */
+    rc = buf_rx_parse_string(&rx, "<t>",
+                             "%tokens EXPR\nEXPR [0-9]+\n%grammar\n"
+                             "%start expr\nexpr : EXPR ;\n");
+    CHECK(rc == 0, "EXPR (token) vs expr (nonterminal) both parse");
+    if (rc == 0) {
+        BufSym *s = &rx.syms[rx.prods[0].rhs_start];
+        CHECK(s->is_terminal && strcmp(rx.tokens[s->index], "EXPR") == 0,
+              "'EXPR' rhs symbol classifies as the token, not case-folded");
+        CHECK(strcmp(rx.nonterms[rx.prods[0].lhs].name, "expr") == 0,
+              "'expr' lhs stays a distinct nonterminal from 'EXPR'");
+    }
+}
+
 /* Every entry: a spec that must fail, and a substring its error must carry. */
 static void test_errors(void)
 {
@@ -195,6 +291,38 @@ static void test_errors(void)
           "rule with no regex" },
         { "%tokens A\n1BAD x\n",       "unexpected character",
           "rule name must start with a letter or _" },
+
+        /* %grammar section */
+        { "%tokens A\nA a\n%grammar\nexpr : A ;\n",
+          "the %start directive is required",
+          "%grammar without %start" },
+        { "%tokens A\nA a\n%grammar\n%start expr\nterm : A ;\n",
+          "%start symbol 'expr' has no production",
+          "%start names an undefined nonterminal" },
+        { "%tokens A\nA a\n%grammar\n%start expr\nexpr : A | facter ;\n",
+          "nonterminal 'facter' is used but never defined",
+          "undefined nonterminal used in a production" },
+        { "%tokens A\nA a\n%grammar\n%start expr\nA : A ;\n",
+          "'A' is a %tokens terminal and cannot be a production left-hand side",
+          "a token cannot be a production lhs" },
+        { "%tokens A\nA a\n%grammar\n%start A\nexpr : A ;\n",
+          "'A' is a %tokens terminal and cannot be a %start symbol",
+          "a token cannot be the %start symbol" },
+        { "%tokens A\nA a\n%start expr\n%grammar\nexpr : A ;\n",
+          "%start is only valid inside a %grammar section",
+          "%start before %grammar" },
+        { "%tokens A\nA a\n%grammar\n%start expr\nexpr A ;\n",
+          "expected ':' after nonterminal 'expr'",
+          "missing ':' in a production" },
+        { "%tokens A\nA a\n%grammar\n%start expr\nexpr : A\n",
+          "expected ';' at end of production 'expr'",
+          "missing ';' at end of a production" },
+        { "%tokens A\nA a\n%grammar\n%start expr\nexpr : A @ ;\n",
+          "unexpected character '@' in grammar",
+          "stray character in a production rhs" },
+        { "%tokens A\nA a\n%grammar\n%start expr\n1bad : A ;\n",
+          "unexpected character '1' in grammar",
+          "nonterminal name must start with a letter or _" },
     };
     int i;
     int nc = (int)(sizeof(cases) / sizeof(cases[0]));
@@ -220,12 +348,24 @@ static void test_linecol(void)
           "error points at the '[' on line 3, col 6");
     if (!strstr(rx.error, "<t>:3:6:"))
         printf("  error was: %s\n", rx.error);
+
+    /* a mid-grammar error, several lines into a %grammar section, carries
+     * the exact line:col of the offending symbol */
+    CHECK(buf_rx_parse_string(&rx, "<t>",
+                              "%tokens A\nA a\n\n%grammar\n%start expr\n\n"
+                              "expr : A\n     | facter\n     ;\n") != 0,
+          "undefined nonterminal several lines into %grammar");
+    CHECK(strstr(rx.error, "<t>:8:8:") != NULL,
+          "error points at 'facter' on line 8, col 8");
+    if (!strstr(rx.error, "<t>:8:8:"))
+        printf("  error was: %s\n", rx.error);
 }
 
 int main(void)
 {
     test_calc_spec();
     test_grammar_shapes();
+    test_grammar_section();
     test_errors();
     test_linecol();
 

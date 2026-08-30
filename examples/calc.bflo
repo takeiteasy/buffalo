@@ -1,4 +1,4 @@
-# calc.l -- the M1 target lexer spec. Checked in now; not built until M4.
+# calc.bflo -- the reference calculator lexer + grammar spec.
 # Lines starting with '#' are comments. Blank lines are ignored.
 
 %tokens INT FLOAT IDENT PLUS STAR LPAREN RPAREN
@@ -13,3 +13,24 @@ RPAREN    ")"
 
 %skip     [ \t\r\n]+
 %skip     "#" [^\n]*
+
+# The grammar section is read and validated by the spec reader (a %grammar
+# block, terminals resolved implicitly against %tokens, an explicit required
+# %start) but nothing downstream builds parser tables from it yet -- it has
+# no effect on the lexer pipeline below.
+%grammar
+%start expr
+
+expr : expr PLUS term
+     | term
+     ;
+
+term : term STAR factor
+     | factor
+     ;
+
+factor : LPAREN expr RPAREN
+       | INT
+       | FLOAT
+       | IDENT
+       ;

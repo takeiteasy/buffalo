@@ -6,7 +6,7 @@
 # This script just assembles that invocation.
 #
 #   buffalo lex   SPEC.bflo [-o OUT.gen.c] [--tokens TOK.h] [-- <extra cccc args>]
-#   buffalo parse SPEC.y ...                 (Phase 2 -- not implemented)
+#   buffalo parse SPEC.bflo ...              (Phase 2 -- not implemented)
 #   buffalo version
 #   buffalo help
 #
@@ -30,8 +30,9 @@ commands:
         the default is SPEC with a trailing ".bflo" replaced by "_tokens.h"
         (examples/calc.bflo -> examples/calc_tokens.h).
 
-  parse SPEC.y ...
-        Parser generator. Phase 2 -- not implemented yet.
+  parse SPEC.bflo ...
+        Parser generator, over the same .bflo file's %grammar section.
+        Phase 2 -- not implemented yet.
 
   version
   help

@@ -1,4 +1,4 @@
-# json.l -- RFC 8259 lexer spec, the M5 stress case for escapes and optional
+# json.bflo -- RFC 8259 lexer spec, the stress case for escapes and optional
 # groups (STRING's \uXXXX, NUMBER's fraction/exponent). Lines starting with
 # '#' are comments. Blank lines are ignored.
 

@@ -12,16 +12,24 @@
  * inside the comptime VM once the including file routes <stdio.h> with
  * `#include @comptime`.
  *
- * Input: a .bflo spec (see docs/lex-spec-format.md) --
+ * Input: a .bflo spec (see docs/bflo-format.md) --
  *
  *     %tokens NAME...            (required; fixes the enum order)
  *     NAME   <regex>             (a named rule; kind is TOK_<NAME>)
  *     %skip  <regex>             (matched, produces no token)
  *     # comment                  (whole-line; blank lines ignored)
+ *     %grammar                   (opens an optional grammar section,
+ *                                 running to end of file)
+ *     %start NAME                (required inside %grammar)
+ *     NAME : SYM... | SYM... ;   (a production; terminal/nonterminal is
+ *                                 resolved implicitly against %tokens)
  *
  * Output: for each rule, a regex AST rooted at a node index, with line:col
  * tracked per node and pointed back into the .bflo file for diagnostics. The
- * ordered %tokens list is exposed for buf_tokcheck.h.
+ * ordered %tokens list is exposed for buf_tokcheck.h. When a %grammar
+ * section is present, its productions, resolved symbols and %start
+ * nonterminal are exposed the same way -- read and validated here, but not
+ * yet consumed by any table construction.
  *
  * Regex v1 grammar: literals, "..." strings, ., [...] classes with ranges
  * and negation, the \n \t \r \f \v \0 and metacharacter escapes, the
@@ -33,6 +41,10 @@
  * A rule whose regex can match the empty string is rejected at read time
  * with a line:col error -- a nullable %skip rule would make buf_run spin,
  * and a nullable named rule would emit zero-length tokens.
+ *
+ * Unlike the lexer section, the grammar section is not line-oriented --
+ * productions may span lines, so it is parsed by its own char-stream
+ * sub-parser (BufGrP), mirroring the regex sub-parser (BufRxP) below.
  */
 #ifndef BUF_RX_H
 #define BUF_RX_H
@@ -53,6 +65,11 @@ extern "C" {
 #define BUF_RX_NAME_MAX    64
 #define BUF_RX_SPEC_MAX    65536
 #define BUF_RX_ERR_MAX     256
+
+#define BUF_RX_MAX_NONTERMS 128   /* grammar nonterminals; see
+                                  * docs/performance.md for arena peaks */
+#define BUF_RX_MAX_PRODS    512   /* grammar productions (one per alternative) */
+#define BUF_RX_MAX_SYMS     2048  /* rhs symbols, pooled across all productions */
 
 typedef enum {
     BUF_RX_CLASS,   /* leaf: a set of bytes, held as a 256-bit bitset  */
@@ -78,6 +95,26 @@ typedef struct {
     int  tok_index;             /* index into tokens[]; -1 for %skip  */
 } BufRule;
 
+/* --- %grammar section: productions over the %tokens vocabulary -------- */
+
+typedef struct {
+    int is_terminal; /* 1: `index` is into tokens[]; 0: into nonterms[] */
+    int index;
+    int line, col;    /* of this symbol's use, into the .bflo file      */
+} BufSym;
+
+typedef struct {
+    int lhs;              /* nonterms[] index                          */
+    int rhs_start, rhs_len; /* slice of syms[]; rhs_len 0 == epsilon   */
+    int line, col;         /* of this alternative                     */
+} BufProd;
+
+typedef struct {
+    char name[BUF_RX_NAME_MAX];
+    int  line, col;  /* of the first mention (a use or a definition)  */
+    int  defined;    /* has at least one production                  */
+} BufNonterm;
+
 typedef struct {
     char tokens[BUF_RX_MAX_TOKENS][BUF_RX_NAME_MAX];
     int  token_line[BUF_RX_MAX_TOKENS];
@@ -89,6 +126,18 @@ typedef struct {
 
     BufRule   rules[BUF_RX_MAX_RULES];
     int       rule_count;
+
+    int         has_grammar;
+    int         grammar_line, grammar_col; /* of the %grammar directive */
+    int         has_start;
+    int         start_nt;                  /* nonterms[] index          */
+    int         start_line, start_col;     /* of the %start symbol name */
+    BufNonterm  nonterms[BUF_RX_MAX_NONTERMS];
+    int         nonterm_count;
+    BufProd     prods[BUF_RX_MAX_PRODS];
+    int         prod_count;
+    BufSym      syms[BUF_RX_MAX_SYMS];
+    int         sym_count;
 
     char error[BUF_RX_ERR_MAX];
     int  has_error;
@@ -624,11 +673,272 @@ static int buf_rx_token_index(BufRx *rx, const char *name) {
     return -1;
 }
 
+/* --- %grammar section: char-stream sub-parser -------------------------
+ *
+ * Productions span lines, so (unlike the rest of buf_rx_parse) this cannot
+ * be handled one line at a time. Mirrors BufRxP: its own cursor, its own
+ * line/col tracking, advanced only in buf_grp_next.
+ */
+
+typedef struct {
+    BufRx      *rx;
+    const char *p;
+    const char *end;
+    int         line; /* 1-based, into the .bflo file                  */
+    int         col;  /* 1-based, advances as bytes are consumed       */
+} BufGrP;
+
+static int buf_grp_peek(BufGrP *P) {
+    return P->p < P->end ? (unsigned char)*P->p : -1;
+}
+static int buf_grp_next(BufGrP *P) {
+    int c;
+    if (P->p >= P->end) return -1;
+    c = (unsigned char)*P->p++;
+    if (c == '\n') { P->line += 1; P->col = 1; }
+    else            P->col  += 1;
+    return c;
+}
+/* Whitespace *and* '#' end-of-line comments are insignificant here, same
+ * as blank lines and whole-line comments in the lexer section. */
+static void buf_grp_skip_ws(BufGrP *P) {
+    for (;;) {
+        int c = buf_grp_peek(P);
+        if (c == '#') {
+            while (buf_grp_peek(P) >= 0 && buf_grp_peek(P) != '\n')
+                buf_grp_next(P);
+            continue;
+        }
+        if (c >= 0 && buf_rx_is_space(c)) { buf_grp_next(P); continue; }
+        break;
+    }
+}
+/* Consume a NAME into `out` (already known to start with a name char). */
+static int buf_grp_name(BufGrP *P, char *out) {
+    int i = 0;
+    while (buf_rx_is_name((unsigned char)buf_grp_peek(P))) {
+        if (i >= BUF_RX_NAME_MAX - 1) {
+            buf_rx_err0(P->rx, P->line, P->col, "grammar symbol name too long");
+            return 0;
+        }
+        out[i++] = (char)buf_grp_next(P);
+    }
+    out[i] = '\0';
+    return 1;
+}
+
+static int buf_rx_nt_index(BufRx *rx, const char *name) {
+    int i;
+    for (i = 0; i < rx->nonterm_count; i++)
+        if (strcmp(rx->nonterms[i].name, name) == 0) return i;
+    return -1;
+}
+/* Look up or intern a nonterminal by name; does not mark it defined --
+ * a use (rhs mention, or %start) does not count as a definition. */
+static int buf_gr_intern_nt(BufRx *rx, const char *name, int line, int col) {
+    int i = buf_rx_nt_index(rx, name);
+    BufNonterm *nt;
+    if (i >= 0) return i;
+    if (rx->nonterm_count >= BUF_RX_MAX_NONTERMS) {
+        buf_rx_err0(rx, line, col, "too many grammar nonterminals");
+        return 0;
+    }
+    i  = rx->nonterm_count++;
+    nt = &rx->nonterms[i];
+    strncpy(nt->name, name, BUF_RX_NAME_MAX - 1);
+    nt->name[BUF_RX_NAME_MAX - 1] = '\0';
+    nt->line    = line;
+    nt->col     = col;
+    nt->defined = 0;
+    return i;
+}
+
+/* One production block: NAME ':' alt ('|' alt)* ';', where an alt is zero
+ * or more symbol names (empty == epsilon). */
+static void buf_gr_production(BufGrP *P) {
+    BufRx *rx = P->rx;
+    char   lhs_name[BUF_RX_NAME_MAX];
+    int    lhs_line, lhs_col, lhs_nt, ti, c;
+
+    lhs_line = P->line;
+    lhs_col  = P->col;
+    if (!buf_grp_name(P, lhs_name)) return;
+
+    ti = buf_rx_token_index(rx, lhs_name);
+    if (ti >= 0) {
+        buf_rx_err_s(rx, lhs_line, lhs_col,
+                     "'%s' is a %%tokens terminal and cannot be a "
+                     "production left-hand side", lhs_name);
+        return;
+    }
+    lhs_nt = buf_gr_intern_nt(rx, lhs_name, lhs_line, lhs_col);
+    if (rx->has_error) return;
+    rx->nonterms[lhs_nt].defined = 1;
+
+    buf_grp_skip_ws(P);
+    if (buf_grp_peek(P) != ':') {
+        buf_rx_err_s(rx, P->line, P->col,
+                     "expected ':' after nonterminal '%s'", lhs_name);
+        return;
+    }
+    buf_grp_next(P); /* ':' */
+    buf_grp_skip_ws(P);
+
+    for (;;) {
+        int alt_line = P->line, alt_col = P->col;
+        int rhs_start = rx->sym_count;
+        int rhs_len   = 0;
+
+        for (;;) {
+            char sname[BUF_RX_NAME_MAX];
+            int  sline, scol, si, sti;
+
+            c = buf_grp_peek(P);
+            if (c < 0 || c == '|' || c == ';') break;
+            if (!buf_rx_is_name_start((unsigned char)c)) {
+                buf_rx_err_c(rx, P->line, P->col,
+                             "unexpected character '%s' in grammar", c);
+                return;
+            }
+            sline = P->line;
+            scol  = P->col;
+            if (!buf_grp_name(P, sname)) return;
+            if (rx->sym_count >= BUF_RX_MAX_SYMS) {
+                buf_rx_err0(rx, sline, scol, "too many grammar symbols");
+                return;
+            }
+            si  = rx->sym_count++;
+            sti = buf_rx_token_index(rx, sname);
+            if (sti >= 0) {
+                rx->syms[si].is_terminal = 1;
+                rx->syms[si].index       = sti;
+            } else {
+                int nt = buf_gr_intern_nt(rx, sname, sline, scol);
+                if (rx->has_error) return;
+                rx->syms[si].is_terminal = 0;
+                rx->syms[si].index       = nt;
+            }
+            rx->syms[si].line = sline;
+            rx->syms[si].col  = scol;
+            rhs_len++;
+            buf_grp_skip_ws(P);
+        }
+
+        if (rx->prod_count >= BUF_RX_MAX_PRODS) {
+            buf_rx_err0(rx, alt_line, alt_col, "too many grammar productions");
+            return;
+        }
+        {
+            BufProd *pr = &rx->prods[rx->prod_count++];
+            pr->lhs       = lhs_nt;
+            pr->rhs_start = rhs_start;
+            pr->rhs_len   = rhs_len;
+            pr->line      = alt_line;
+            pr->col       = alt_col;
+        }
+
+        c = buf_grp_peek(P);
+        if (c == '|') { buf_grp_next(P); buf_grp_skip_ws(P); continue; }
+        if (c == ';') { buf_grp_next(P); return; }
+        buf_rx_err_s(rx, P->line, P->col,
+                     "expected ';' at end of production '%s'", lhs_name);
+        return;
+    }
+}
+
+/* The %start directive, consumed after the leading '%' + "start" is
+ * already read by the caller. */
+static void buf_gr_start(BufGrP *P) {
+    BufRx *rx = P->rx;
+    char   sname[BUF_RX_NAME_MAX];
+    int    sline, scol, sti;
+
+    buf_grp_skip_ws(P);
+    sline = P->line;
+    scol  = P->col;
+    if (!buf_rx_is_name_start((unsigned char)buf_grp_peek(P))) {
+        buf_rx_err0(rx, P->line, P->col,
+                     "expected a nonterminal name after %start");
+        return;
+    }
+    if (!buf_grp_name(P, sname)) return;
+    if (rx->has_start) {
+        buf_rx_err0(rx, sline, scol, "duplicate %start directive");
+        return;
+    }
+    sti = buf_rx_token_index(rx, sname);
+    if (sti >= 0) {
+        buf_rx_err_s(rx, sline, scol,
+                     "'%s' is a %%tokens terminal and cannot be a "
+                     "%%start symbol", sname);
+        return;
+    }
+    rx->start_nt = buf_gr_intern_nt(rx, sname, sline, scol);
+    if (rx->has_error) return;
+    rx->has_start   = 1;
+    rx->start_line  = sline;
+    rx->start_col   = scol;
+}
+
+/* Parse the %grammar section: everything from `off` (just past the
+ * %grammar directive's line) to end of spec. */
+static void buf_rx_parse_grammar(BufRx *rx, int off, int line0) {
+    BufGrP P;
+    P.rx   = rx;
+    P.p    = rx->spec + off;
+    P.end  = rx->spec + rx->spec_len;
+    P.line = line0;
+    P.col  = 1;
+
+    for (;;) {
+        buf_grp_skip_ws(&P);
+        if (rx->has_error) return;
+        if (buf_grp_peek(&P) < 0) break;
+
+        if (buf_grp_peek(&P) == '%') {
+            int  dline = P.line, dcol = P.col;
+            char dir[BUF_RX_NAME_MAX];
+            buf_grp_next(&P); /* '%' */
+            if (!buf_rx_is_name_start((unsigned char)buf_grp_peek(&P))) {
+                buf_rx_err0(rx, dline, dcol,
+                            "expected a directive name after '%' in "
+                            "%grammar section");
+                return;
+            }
+            if (!buf_grp_name(&P, dir)) return;
+            if (strcmp(dir, "start") == 0) {
+                buf_gr_start(&P);
+            } else {
+                buf_rx_err_s(rx, dline, dcol,
+                             "unknown directive '%%%s' in %%grammar section",
+                             dir);
+            }
+            if (rx->has_error) return;
+            continue;
+        }
+
+        if (!buf_rx_is_name_start((unsigned char)buf_grp_peek(&P))) {
+            buf_rx_err_c(rx, P.line, P.col,
+                         "unexpected character '%s' in grammar",
+                         buf_grp_peek(&P));
+            return;
+        }
+        buf_gr_production(&P);
+        if (rx->has_error) return;
+    }
+}
+
 /* --- spec-file (line) layer -------------------------------------- */
 
 static void buf_rx_init(BufRx *rx) {
     rx->token_count = 0;
     rx->rule_count  = 0;
+    rx->has_grammar = 0;
+    rx->has_start   = 0;
+    rx->start_nt    = -1;
+    rx->nonterm_count = 0;
+    rx->prod_count     = 0;
+    rx->sym_count       = 0;
     rx->error[0]    = '\0';
     rx->has_error   = 0;
     rx->spec_len    = 0;
@@ -786,6 +1096,29 @@ static void buf_rx_parse(BufRx *rx) {
                            buf_rx_is_space((unsigned char)s[a])) a++;
                     buf_rx_add_rule(rx, "", 1, &s[a], le - a, line, col0,
                                     (a - ls) + 1);
+                } else if (dlen == 8 && buf_rx_prefix(&s[c0], "%grammar", 8)) {
+                    int a = de;
+                    while (a < le &&
+                           buf_rx_is_space((unsigned char)s[a])) a++;
+                    if (a < le && s[a] != '#') {
+                        buf_rx_err0(rx, line, col0,
+                                    "unexpected text after %grammar");
+                    } else {
+                        /* Reached only once: %grammar always consumes the
+                         * rest of the file below, so the line layer can
+                         * never see a second one. A repeated %grammar
+                         * inside the section itself surfaces as "unknown
+                         * directive '%grammar' in %grammar section". */
+                        rx->has_grammar   = 1;
+                        rx->grammar_line  = line;
+                        rx->grammar_col   = col0;
+                        buf_rx_parse_grammar(rx, i, line + 1);
+                        i = len;
+                    }
+                } else if (dlen == 6 && buf_rx_prefix(&s[c0], "%start", 6)) {
+                    buf_rx_err0(rx, line, col0,
+                                "%start is only valid inside a %grammar "
+                                "section");
                 } else {
                     char dir[BUF_RX_NAME_MAX];
                     int  n = dlen < BUF_RX_NAME_MAX - 1 ? dlen
@@ -851,6 +1184,29 @@ static void buf_rx_parse(BufRx *rx) {
             buf_rx_err_s(rx, rx->token_line[k], 1,
                          "%%tokens entry '%s' has no matching rule",
                          rx->tokens[k]);
+            return;
+        }
+    }
+
+    if (!rx->has_grammar) return;
+
+    if (!rx->has_start) {
+        buf_rx_err0(rx, rx->grammar_line, rx->grammar_col,
+                    "the %start directive is required in a %grammar "
+                    "section");
+        return;
+    }
+    if (!rx->nonterms[rx->start_nt].defined) {
+        buf_rx_err_s(rx, rx->start_line, rx->start_col,
+                     "%%start symbol '%s' has no production",
+                     rx->nonterms[rx->start_nt].name);
+        return;
+    }
+    for (k = 0; k < rx->nonterm_count; k++) {
+        if (!rx->nonterms[k].defined) {
+            buf_rx_err_s(rx, rx->nonterms[k].line, rx->nonterms[k].col,
+                         "nonterminal '%s' is used but never defined",
+                         rx->nonterms[k].name);
             return;
         }
     }

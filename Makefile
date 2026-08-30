@@ -1,14 +1,14 @@
 # buffalo -- build / check / clean
 #
-# The M0 demo lexer (build/digits) still builds and runs with the system cc
-# only, no cccc. The comptime front half is header-only, dependency-free C
+# The digits demo lexer (build/digits) still builds and runs with the system
+# cc only, no cccc. The comptime front half is header-only, dependency-free C
 # pulled into cccc via `#include @comptime`, and also built with a plain cc
 # for host unit tests:
 #
-#   buf_rx.h        .l spec + regex reader           -> tests/t_rx.c
-#   buf_tokcheck.h  <name>_tokens.h validator        -> tests/t_tokcheck.c
-#   buf_nfa.h       Thompson construction (AST->NFA) -> tests/t_nfa.c
-#   buf_dfa.h       subset construction (NFA->DFA)   -> tests/t_dfa.c
+#   buf_rx.h        .bflo spec + regex reader         -> tests/t_rx.c
+#   buf_tokcheck.h  <name>_tokens.h validator         -> tests/t_tokcheck.c
+#   buf_nfa.h       Thompson construction (AST->NFA)  -> tests/t_nfa.c
+#   buf_dfa.h       subset construction (NFA->DFA)    -> tests/t_dfa.c
 #
 # buf_emit.h (DFA -> GlobalVar tables + buf_next) is comptime-VM only -- it
 # uses cccc's reflection builtins, so no host test includes it.
@@ -17,15 +17,15 @@
 # freshly built tables. The `spec` target runs the full comptime pipeline over
 # every reference spec; `check` invokes it -- plus the `generated` and
 # `native` parity targets -- but skips all three with a notice when cccc is
-# not on PATH. `bench` is the M3 per-phase cost measurement.
+# not on PATH. `bench` is the per-phase cost measurement (docs/performance.md).
 #
 # `generated` lowers a spec to a .gen.c with `bin/buffalo lex` (cccc
 # -c=generated) then builds it with a plain cc against the runtime and an
 # example _main.c. `native` does the whole thing in one cccc -c=native
 # invocation. Both must produce byte-identical output to each other, and (for
 # digits, the one example with a hand-written reference table file) to
-# build/digits too. EXAMPLES lists the M5 example suite; big.l stays out of
-# it -- it's the M3 bench/stress fixture, not a worked example.
+# build/digits too. EXAMPLES lists the example suite; big.bflo stays out of
+# it -- it's a bench/stress fixture, not a worked example.
 
 CC     ?= cc
 CFLAGS ?= -O2 -Wall
@@ -81,26 +81,26 @@ check: build/digits test
 # Run the full comptime pipeline over every reference spec. Needs cccc on
 # PATH (or $CCCC): it reads the spec, validates the token header, builds the
 # NFA then the DFA, and emits the four tables + the buf_next wrapper into the
-# .gen.c. clike.l is the ~40-rule stress case -- keep it here so a comptime
+# .gen.c. clike.bflo is the ~40-rule stress case -- keep it here so a comptime
 # regression on the big spec is caught by `make check`.
 spec: | build
-	@bin/buffalo lex examples/calc.l  -o build/calc.l.gen.c  && echo "ok   spec calc"
-	@bin/buffalo lex examples/clike.l -o build/clike.l.gen.c && echo "ok   spec clike"
-	@bin/buffalo lex examples/json.l  -o build/json.l.gen.c  && echo "ok   spec json"
+	@bin/buffalo lex examples/calc.bflo  -o build/calc.bflo.gen.c  && echo "ok   spec calc"
+	@bin/buffalo lex examples/clike.bflo -o build/clike.bflo.gen.c && echo "ok   spec clike"
+	@bin/buffalo lex examples/json.bflo  -o build/json.bflo.gen.c  && echo "ok   spec json"
 
 # -- generated / native parity ------------------------------------------------
 #
 # The lowered .gen.c: `bin/buffalo lex` runs cccc -c=generated over
 # src/buf_comptime.c with the spec as -D BUF_SPEC.
-build/%.l.gen.c: examples/%.l examples/%_tokens.h src/buf_comptime.c \
+build/%.bflo.gen.c: examples/%.bflo examples/%_tokens.h src/buf_comptime.c \
                  include/buffalo/buf_emit.h $(CT_HDRS) $(RT_HDRS) | build
-	@bin/buffalo lex examples/$*.l -o $@
+	@bin/buffalo lex examples/$*.bflo -o $@
 
 # Plain-cc build of a lowered spec: .gen.c + runtime + that example's driver.
-build/%_gen: build/%.l.gen.c examples/%_main.c $(RT_SRC) $(RT_HDRS) \
+build/%_gen: build/%.bflo.gen.c examples/%_main.c $(RT_SRC) $(RT_HDRS) \
              examples/%_tokens.h | build
 	$(CC) $(CFLAGS) -Iruntime -Iexamples -o $@ \
-	    build/$*.l.gen.c examples/$*_main.c $(RT_SRC)
+	    build/$*.bflo.gen.c examples/$*_main.c $(RT_SRC)
 
 # One-shot: cccc -c=native lowers spec + runtime + driver to an executable
 # in a single invocation, no intermediate .gen.c. BUF_STOP_AFTER=5 must be a
@@ -108,10 +108,10 @@ build/%_gen: build/%.l.gen.c examples/%_main.c $(RT_SRC) $(RT_HDRS) \
 # bin/buffalo passes it on the generated path; here it is explicit.
 build/%_native: src/buf_comptime.c examples/%_main.c $(RT_SRC) \
                 include/buffalo/buf_emit.h $(CT_HDRS) $(RT_HDRS) \
-                examples/%.l examples/%_tokens.h | build
+                examples/%.bflo examples/%_tokens.h | build
 	$(CCCC) -c=native src/buf_comptime.c $(RT_SRC) examples/$*_main.c \
 	    -Iinclude/buffalo -Iruntime -Iexamples \
-	    -D BUF_SPEC='"examples/$*.l"' -D BUF_STOP_AFTER=5 -o $@
+	    -D BUF_SPEC='"examples/$*.bflo"' -D BUF_STOP_AFTER=5 -o $@
 
 # generated: build every example's lowered spec with a plain cc and run its
 # golden diff.
@@ -143,9 +143,9 @@ native: $(EXAMPLES:%=build/%_native) $(EXAMPLES:%=build/%_gen) build/digits
 	    && echo "ok   parity hand-written == generated == native (digits)" \
 	    || { echo "FAIL three-way parity"; exit 1; }
 
-# M3 spike: per-phase comptime cost of the pipeline (the BUF_STOP_AFTER
-# ablation ladder in src/buf_comptime.c). Needs cccc + perl. Not part of
-# `check` -- it is slow. See docs/performance.md.
+# Per-phase comptime cost of the pipeline (the BUF_STOP_AFTER ablation ladder
+# in src/buf_comptime.c). Needs cccc + perl. Not part of `check` -- it is
+# slow. See docs/performance.md.
 bench:
 	@tests/bench.sh
 

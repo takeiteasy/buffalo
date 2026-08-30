@@ -1,8 +1,8 @@
-# The `.l` lexer spec format
+# The `.bflo` lexer spec format
 
-> Reference for the `.l` reader. `examples/calc.l` is the small worked example;
-> `examples/json.l` is a mid-sized one exercising escapes and optional groups;
-> `examples/clike.l` is a ~40-rule one.
+> Reference for the `.bflo` reader. `examples/calc.bflo` is the small worked example;
+> `examples/json.bflo` is a mid-sized one exercising escapes and optional groups;
+> `examples/clike.bflo` is a ~40-rule one.
 
 ```
 # Lines starting with '#' are comments. Blank lines are ignored.
@@ -48,9 +48,9 @@ RPAREN    ")"
 
 ## The token header
 
-`buffalo lex SPEC.l` validates a checked-in `<name>_tokens.h` against the
-`%tokens` list. The path is derived from the spec path — the trailing `.l` is
-replaced with `_tokens.h` (`calc.l` → `calc_tokens.h`) — or given explicitly
+`buffalo lex SPEC.bflo` validates a checked-in `<name>_tokens.h` against the
+`%tokens` list. The path is derived from the spec path — the trailing `.bflo` is
+replaced with `_tokens.h` (`calc.bflo` → `calc_tokens.h`) — or given explicitly
 with `--tokens PATH`. The header must open with
 
 ```c
@@ -78,7 +78,7 @@ non-reserved kind is an error. `%tokens` is the only authority on order.
 
 Not in v1: `{n,m}` counts, `^` / `$` anchors, `\b`, lookaround, non-greedy,
 backreferences. These are not silently accepted — each is reported as a
-`line:col` error in the `.l` file.
+`line:col` error in the `.bflo` file.
 
 Unquoted whitespace inside a regex is insignificant: it separates atoms, so
 `"#" [^\n]*` is the concatenation of `"#"` and `[^\n]*`. A literal space is

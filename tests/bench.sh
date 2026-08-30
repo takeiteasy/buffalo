@@ -1,10 +1,10 @@
 #!/bin/sh
-# bench.sh -- M3 spike harness: per-phase comptime cost of the buffalo pipeline.
+# bench.sh -- per-phase comptime cost of the buffalo pipeline.
 #
-# The go/no-go question (tracker) is "how much compile time does running M1+M2
-# plus a minimal emit step inside cccc's comptime VM actually add for a real
-# ~40-rule lexer, and which phase owns it". A single wall-clock total cannot
-# answer that, so this walks the BUF_STOP_AFTER ablation ladder in
+# The question is "how much compile time does running the spec-read/NFA/DFA
+# pipeline plus a minimal emit step inside cccc's comptime VM actually add for
+# a real ~40-rule lexer, and which phase owns it". A single wall-clock total
+# cannot answer that, so this walks the BUF_STOP_AFTER ablation ladder in
 # src/buf_comptime.c:
 #
 #   0 nothing   1 +read   2 +tokcheck   3 +NFA   4 +DFA   5 +emit
@@ -16,7 +16,7 @@
 #
 #   make bench                 # both reference specs
 #   REPS=9 tests/bench.sh      # more reps
-#   tests/bench.sh path/to/spec.l ...
+#   tests/bench.sh path/to/spec.bflo ...
 #
 # Plain POSIX sh; needs cccc on PATH (or $CCCC) and perl for the hi-res timer.
 
@@ -39,7 +39,7 @@ fi
 
 mkdir -p "$here/build"
 
-SPECS=${*:-"$here/examples/calc.l $here/examples/clike.l"}
+SPECS=${*:-"$here/examples/calc.bflo $here/examples/clike.bflo"}
 
 BENCH_T="$here/build/.bench_t"
 export BENCH_T

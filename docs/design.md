@@ -15,21 +15,21 @@ arrays, no `malloc`, `snprintf` into an error buffer, first-error-wins sticky
 flag (they cannot call `MacroErrorAt` directly because they must also compile
 under a plain `cc` for host unit tests). `src/buf_comptime.c` is the boundary: it
 is the only place that calls `MacroErrorAt`, converting a header's sticky error
-string into a comptime diagnostic pointed at the `.l` file.
+string into a comptime diagnostic pointed at the `.bflo` file.
 
 `#include @shared "buf_rt.h"` (not `@comptime`) is deliberate: a `Quote()`
 template that names an extern — `buf_run`, the table symbols — is rejected by
 cccc's identifier resolver unless that extern arrived via `@shared`.
 
-### Comptime modules (M1 onward)
+### Comptime modules
 
-- `buf_rx.h` *(M1)* — spec-file + regex reader: `.l` text → regex AST,
+- `buf_rx.h` — spec-file + regex reader: `.bflo` text → regex AST,
   `line:col` per node. Character classes are desugared into a 256-bit byte set
-  at parse time (so M2's alphabet partitioning is a set-grouping pass). A rule
+  at parse time (so alphabet partitioning is a set-grouping pass). A rule
   whose regex is nullable is rejected here with a `line:col` error.
-- `buf_tokcheck.h` *(M1)* — validate a checked-in `<name>_tokens.h` against
+- `buf_tokcheck.h` — validate a checked-in `<name>_tokens.h` against
   `%tokens`.
-- `buf_nfa.h` *(M2)* — Thompson construction: regex AST → ε-NFA. One fragment
+- `buf_nfa.h` — Thompson construction: regex AST → ε-NFA. One fragment
   per AST node; each NFA state has at most one labelled (byte-set) edge and up
   to two ε edges, which covers every fragment. Each rule's fragment ends in an
   accept state tagged with the rule index; all rule fragments hang off state 0
@@ -39,14 +39,14 @@ cccc's identifier resolver unless that extern arrived via `@shared`.
   is worklist + visited-set, never recursive. Fragment entry/exit come back
   through out-params, not a returned struct: cccc's comptime VM mishandles a
   by-value struct return from a recursive comptime function.
-- `buf_dfa.h` *(M2)* — subset construction: ε-NFA → DFA over alphabet
+- `buf_dfa.h` — subset construction: ε-NFA → DFA over alphabet
   equivalence classes (not raw bytes). The alphabet partition starts with all
   256 bytes in one class and splits on each CLASS-leaf byte set, then
   **renumbers classes by first appearance over bytes 0..255** so the numbering
   is deterministic and hash/iteration-order independent. Each DFA state is a
   sorted run of NFA-state indices in one **shared pool** (`set_off`/`set_len`
-  index into it), capped independently of the DFA state count so M3 can tune
-  the two arena knobs separately; runs are collected by sweeping NFA ids
+  index into it), capped independently of the DFA state count so the two
+  arena knobs can be tuned separately; runs are collected by sweeping NFA ids
   ascending, so they double as the identity key. State ids are handed out in
   worklist **discovery order** only. Each DFA state carries the winning rule
   index (lowest rule index among the NFA accept states it contains — earlier
@@ -79,7 +79,7 @@ sharp edges around `while` / `break` / `continue` (see below).
 
 ## Generated table file — shape
 
-`cccc -c=generated src/buf_comptime.c -D BUF_SPEC='"calc.l"'` produces a
+`cccc -c=generated src/buf_comptime.c -D BUF_SPEC='"calc.bflo"'` produces a
 `.gen.c` containing four file-scope `static` tables and one wrapper:
 
 ```c
@@ -177,7 +177,7 @@ with an anonymous typedef.
   `"unsigned char"` (nor `"uchar"` / `"u8"`). Emit the widest signed type that
   fits and cast at the use site.
 - The comptime VM runs interpreted, ~1000–1300× slower than the same code
-  under a plain `cc` (M3: `buf_dfa_build` for `big.l` 1.8 ms native vs. ~2.25 s
+  under a plain `cc` (`buf_dfa_build` for `big.bflo`: 1.8 ms native vs. ~2.25 s
   comptime). Keep the hot construction loops tight — an O(nstates) scan or a
   per-call array clear that is free natively becomes seconds here; see
   [performance.md](performance.md).
@@ -216,12 +216,12 @@ must be textually present in each translation unit that uses them. The caller's
 `*_main.c` cannot `#include` the generated `.c`, and in `-c=native` mode there is
 no generated file at all. Resolution: the token header is **hand-written and
 checked in** (`examples/calc_tokens.h`), and the comptime pass validates it
-against the `.l` spec, erroring on any drift. `%tokens` in the `.l` is the
+against the `.bflo` spec, erroring on any drift. `%tokens` in the `.bflo` is the
 authoritative list. `TOK_EOF = 0` and `TOK_ERROR = 1` are reserved (see
 `BUF_TOK_*` in `buf_rt.h`).
 
 The header path is not a directive in the spec: it is derived from the spec
-path by replacing a trailing `.l` with `_tokens.h` (`calc.l` →
+path by replacing a trailing `.bflo` with `_tokens.h` (`calc.bflo` →
 `calc_tokens.h`), overridable with `buffalo lex --tokens PATH` (which the
 wrapper forwards as `-D BUF_TOKENS_H`). `src/buf_comptime.c` does the
 derivation when `BUF_TOKENS_H` is undefined.
@@ -233,11 +233,12 @@ derivation when `BUF_TOKENS_H` is undefined.
   are the same machine (the cccc norm); a cross-arch `.gen.c` would need
   byte-swapping. Revisit if it ever bites.
 - **`buf_next` is a fixed global name**, so one generated lexer per program. A
-  program that needs two lexers needs a name-parameterised emitter — not planned
-  for Phase 1.
+  program that needs two lexers needs a name-parameterised emitter — not
+  currently planned.
 - **Bytes only, no Unicode.** Input is bytes; UTF-8 is the caller's problem
   (multibyte sequences pass through inside identifiers/strings as raw bytes).
 - **DFA minimisation is opt-in and rarely worth it.** Alphabet equivalence
-  classes (M2) do the load-bearing table shrink; the Moore minimisation pass
-  (`-D BUF_MINIMIZE`) trims only a few percent more and costs comptime it does
-  not earn back. Left in for callers that want the smallest possible table.
+  classes already do the load-bearing table shrink; the Moore minimisation
+  pass (`-D BUF_MINIMIZE`) trims only a few percent more and costs comptime it
+  does not earn back. Left in for callers that want the smallest possible
+  table.

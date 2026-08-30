@@ -1,5 +1,5 @@
 /*
- * buf_rx.h -- buffalo .l spec + regex reader.
+ * buf_rx.h -- buffalo .bflo spec + regex reader.
  *
  * Pure C, header-only, fixed arenas, no malloc. Compiled twice: plain `cc`
  * for the host unit tests (tests/t_rx.c), and inside cccc's comptime VM via
@@ -12,7 +12,7 @@
  * inside the comptime VM once the including file routes <stdio.h> with
  * `#include @comptime`.
  *
- * Input: a .l spec (see docs/lex-spec-format.md) --
+ * Input: a .bflo spec (see docs/lex-spec-format.md) --
  *
  *     %tokens NAME...            (required; fixes the enum order)
  *     NAME   <regex>             (a named rule; kind is TOK_<NAME>)
@@ -20,7 +20,7 @@
  *     # comment                  (whole-line; blank lines ignored)
  *
  * Output: for each rule, a regex AST rooted at a node index, with line:col
- * tracked per node and pointed back into the .l file for diagnostics. The
+ * tracked per node and pointed back into the .bflo file for diagnostics. The
  * ordered %tokens list is exposed for buf_tokcheck.h.
  *
  * Regex v1 grammar: literals, "..." strings, ., [...] classes with ranges
@@ -44,11 +44,11 @@
 extern "C" {
 #endif
 
-#define BUF_RX_MAX_NODES   4096   /* regex AST nodes (ROADMAP M3 table) */
+#define BUF_RX_MAX_NODES   4096   /* regex AST nodes; see docs/performance.md
+                                  * for the measured arena peaks */
 #define BUF_RX_MAX_RULES   256    /* >= BUF_RX_MAX_TOKENS: every %tokens entry
                                   * needs a rule, plus the %skip rules. A full
-                                  * C tokenizer is ~100 rules (examples/big.l);
-                                  * a Phase 2 combined grammar clears 128. */
+                                  * C tokenizer is ~100 rules (examples/big.bflo). */
 #define BUF_RX_MAX_TOKENS  256
 #define BUF_RX_NAME_MAX    64
 #define BUF_RX_SPEC_MAX    65536
@@ -65,7 +65,7 @@ typedef enum {
 
 typedef struct {
     BufRxKind     kind;
-    int           line, col;   /* 1-based, into the .l file           */
+    int           line, col;   /* 1-based, into the .bflo file           */
     unsigned char bits[32];    /* CLASS only: byte c in set iff bit set */
     int           a, b;        /* child node indices, -1 if unused    */
 } BufRxNode;
@@ -74,7 +74,7 @@ typedef struct {
     char name[BUF_RX_NAME_MAX]; /* "" for a %skip rule                */
     int  is_skip;
     int  root;                  /* regex AST root node index          */
-    int  line, col;             /* of the rule, into the .l file      */
+    int  line, col;             /* of the rule, into the .bflo file      */
     int  tok_index;             /* index into tokens[]; -1 for %skip  */
 } BufRule;
 
@@ -225,7 +225,7 @@ typedef struct {
     BufRx      *rx;
     const char *p;      /* cursor into the regex slice                 */
     const char *end;
-    int         line;   /* 1-based, into the .l file (constant here)   */
+    int         line;   /* 1-based, into the .bflo file (constant here)   */
     int         col;    /* 1-based, advances as bytes are consumed     */
 } BufRxP;
 
@@ -574,7 +574,7 @@ static int buf_rxp_alt(BufRxP *P) {
 }
 
 /* Parse one regex slice [text, text+len) whose first byte sits at
- * (file_line, file_col) in the .l file. Returns the AST root node index. */
+ * (file_line, file_col) in the .bflo file. Returns the AST root node index. */
 static int buf_rx_parse_regex(BufRx *rx, const char *text, int len,
                               int file_line, int file_col) {
     BufRxP P;

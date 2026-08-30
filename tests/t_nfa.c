@@ -172,14 +172,14 @@ static void test_calc_stream(void)
     int n;
     int rc;
 
-    rc = buf_rx_read_file(&rx, "examples/calc.l");
-    CHECK(rc == 0, "calc.l parses");
+    rc = buf_rx_read_file(&rx, "examples/calc.bflo");
+    CHECK(rc == 0, "calc.bflo parses");
     if (rc != 0) { printf("  -> %s\n", rx.error); return; }
     rc = buf_nfa_build(&nfa, &rx);
-    CHECK(rc == 0, "calc.l NFA builds");
+    CHECK(rc == 0, "calc.bflo NFA builds");
     if (rc != 0) { printf("  -> %s\n", nfa.error); return; }
 
-    /* calc.l %tokens: INT FLOAT IDENT PLUS STAR LPAREN RPAREN
+    /* calc.bflo %tokens: INT FLOAT IDENT PLUS STAR LPAREN RPAREN
      * -> TOK values 2..8 */
     n = ref_lex("1 + 2.5 * foo", (int)strlen("1 + 2.5 * foo"), t, 32);
     CHECK(n == 5, "1 + 2.5 * foo -> 5 tokens");
@@ -245,11 +245,11 @@ static void test_tie_lowest_rule(void)
 
 static void test_clike_builds(void)
 {
-    int rc = buf_rx_read_file(&rx, "examples/clike.l");
-    CHECK(rc == 0, "clike.l parses");
+    int rc = buf_rx_read_file(&rx, "examples/clike.bflo");
+    CHECK(rc == 0, "clike.bflo parses");
     if (rc != 0) { printf("  -> %s\n", rx.error); return; }
     rc = buf_nfa_build(&nfa, &rx);
-    CHECK(rc == 0, "clike.l NFA builds within the arena");
+    CHECK(rc == 0, "clike.bflo NFA builds within the arena");
     if (rc != 0) printf("  -> %s\n", nfa.error);
 }
 

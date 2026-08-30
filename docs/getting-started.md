@@ -38,14 +38,14 @@ resync on a stray byte, and `TOK_EOF` at end.
 
 ## The comptime pipeline
 
-`bin/buffalo lex` reads a `.l` spec at compile time — inside `cccc`'s comptime
+`bin/buffalo lex` reads a `.bflo` spec at compile time — inside `cccc`'s comptime
 pass — into a regex AST, validates the checked-in token header against the
 spec's `%tokens` list, builds the ε-NFA and DFA, and emits four
 `static const` DFA tables plus a `buf_next` wrapper into the `.gen.c`:
 
 ```sh
-$ bin/buffalo lex examples/calc.l
-Generated C written to examples/calc.l.gen.c
+$ bin/buffalo lex examples/calc.bflo
+Generated C written to examples/calc.bflo.gen.c
 ```
 
 The generated file builds with a stock `cc` against `runtime/buf_rt.c` and an
@@ -55,25 +55,25 @@ time costs ~0.38 s for a ~45-rule lexer, measured in
 none … `5` emit) for per-phase timing.
 
 What you also get is a spec reader and DFA builder that fail loudly and
-precisely. A malformed regex is reported at its `line:col` in the `.l` file:
+precisely. A malformed regex is reported at its `line:col` in the `.bflo` file:
 
 ```sh
-$ bin/buffalo lex broken.l
-buffalo: broken.l:3:8: unterminated character class
+$ bin/buffalo lex broken.bflo
+buffalo: broken.bflo:3:8: unterminated character class
 ```
 
 and so is a token header that has drifted from the spec:
 
 ```sh
-$ bin/buffalo lex examples/calc.l
+$ bin/buffalo lex examples/calc.bflo
 buffalo: examples/calc_tokens.h: token header has 'TOK_FLOAT' where 'TOK_INT' is expected
 ```
 
 ### The token header
 
-`buffalo lex SPEC.l` validates a checked-in `<name>_tokens.h` derived from the
-spec path: the trailing `.l` is replaced with `_tokens.h`, so
-`examples/calc.l` pairs with `examples/calc_tokens.h`. Pass `--tokens PATH` to
+`buffalo lex SPEC.bflo` validates a checked-in `<name>_tokens.h` derived from the
+spec path: the trailing `.bflo` is replaced with `_tokens.h`, so
+`examples/calc.bflo` pairs with `examples/calc_tokens.h`. Pass `--tokens PATH` to
 point somewhere else. The header must open with
 
 ```c
@@ -90,14 +90,14 @@ extra kind, reordering, or explicit value on a non-reserved kind is an error.
 ```sh
 $ bin/buffalo help
 $ bin/buffalo version
-$ bin/buffalo lex examples/calc.l [-o OUT.gen.c] [--tokens TOK.h]
+$ bin/buffalo lex examples/calc.bflo [-o OUT.gen.c] [--tokens TOK.h]
 ```
 
 ## The two build paths
 
-From M4 on there are two ways to get from a `.l` spec to a program, and they
-must produce byte-identical output. `make generated` and `make native` run
-both over every example in the suite — `digits`, `calc`, `clike`, `json`;
+There are two ways to get from a `.bflo` spec to a program, and they must
+produce byte-identical output. `make generated` and `make native` run both
+over every example in the suite — `digits`, `calc`, `clike`, `json`;
 `make check` invokes them under a no-cccc skip gate.
 
 ```sh
@@ -110,19 +110,17 @@ The underlying invocations, for `digits`:
 
 ```sh
 # inspectable path: lower, then build with a stock cc
-bin/buffalo lex examples/digits.l -o build/digits.l.gen.c
+bin/buffalo lex examples/digits.bflo -o build/digits.bflo.gen.c
 cc -O2 -Iruntime -Iexamples -o build/digits_gen \
-    build/digits.l.gen.c examples/digits_main.c runtime/buf_rt.c
+    build/digits.bflo.gen.c examples/digits_main.c runtime/buf_rt.c
 
 # one-shot path: cccc does lowering + build in one step, no intermediate file
 cccc -c=native src/buf_comptime.c runtime/buf_rt.c examples/digits_main.c \
     -Iinclude/buffalo -Iruntime -Iexamples \
-    -D BUF_SPEC='"examples/digits.l"' -D BUF_STOP_AFTER=5 -o build/digits_native
+    -D BUF_SPEC='"examples/digits.bflo"' -D BUF_STOP_AFTER=5 -o build/digits_native
 ```
 
 `-D` (not a source `#define`) carries `BUF_SPEC` and `BUF_STOP_AFTER` —
 comptime bodies do not see ordinary source `#define`s, which is why the
 `native` invocation passes `BUF_STOP_AFTER=5` explicitly where `bin/buffalo`
 does it for you.
-
-For what lands in each milestone see [ROADMAP.md](../ROADMAP.md).

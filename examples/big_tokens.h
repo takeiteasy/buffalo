@@ -1,11 +1,11 @@
 /*
  * big_tokens.h -- checked in; the comptime pass validates this against
- * examples/big.l (%tokens list and order) and errors on drift.
+ * examples/big.bflo (%tokens list and order) and errors on drift.
  *
  * TOK_EOF = 0 and TOK_ERROR = 1 are reserved (see BUF_TOK_* in buf_rt.h).
- * The remaining constants follow big.l's %tokens line, in order. big.l is a
+ * The remaining constants follow big.bflo's %tokens line, in order. big.bflo is a
  * measurement fixture for the M3 spike (docs/performance.md), not a worked
- * example -- see examples/clike.l for that.
+ * example -- see examples/clike.bflo for that.
  */
 #ifndef BIG_TOKENS_H
 #define BIG_TOKENS_H

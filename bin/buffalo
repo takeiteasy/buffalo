@@ -5,7 +5,7 @@
 # cccc over src/buf_comptime.c with the spec path passed as -D BUF_SPEC.
 # This script just assembles that invocation.
 #
-#   buffalo lex   SPEC.l [-o OUT.gen.c] [--tokens TOK.h] [-- <extra cccc args>]
+#   buffalo lex   SPEC.bflo [-o OUT.gen.c] [--tokens TOK.h] [-- <extra cccc args>]
 #   buffalo parse SPEC.y ...                 (Phase 2 -- not implemented)
 #   buffalo version
 #   buffalo help
@@ -23,12 +23,12 @@ usage() {
 usage: buffalo <command> [args]
 
 commands:
-  lex   SPEC.l [-o OUT.gen.c] [--tokens TOK.h] [-- <extra cccc args>]
+  lex   SPEC.bflo [-o OUT.gen.c] [--tokens TOK.h] [-- <extra cccc args>]
         Lower a lexer spec to a portable C table file via cccc -c=generated.
-        Default output: SPEC.l.gen.c
+        Default output: SPEC.bflo.gen.c
         --tokens overrides the checked-in token header to validate against;
-        the default is SPEC with a trailing ".l" replaced by "_tokens.h"
-        (examples/calc.l -> examples/calc_tokens.h).
+        the default is SPEC with a trailing ".bflo" replaced by "_tokens.h"
+        (examples/calc.bflo -> examples/calc_tokens.h).
 
   parse SPEC.y ...
         Parser generator. Phase 2 -- not implemented yet.
@@ -39,7 +39,7 @@ EOF
 }
 
 cmd_lex() {
-    [ $# -ge 1 ] || { echo "buffalo lex: missing SPEC.l" >&2; exit 2; }
+    [ $# -ge 1 ] || { echo "buffalo lex: missing SPEC.bflo" >&2; exit 2; }
     spec=$1; shift
     out="${spec}.gen.c"
     tokens=""

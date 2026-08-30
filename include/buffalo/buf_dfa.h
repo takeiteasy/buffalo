@@ -49,8 +49,8 @@
  * nstates / nclass / start.
  *
  * Ties: accept[s] is the lowest rule index among the NFA accept states in
- * s's set, so earlier rules (%skip included) win a length tie -- matching the
- * ROADMAP and buf_rt.h's contract.
+ * s's set, so earlier rules (%skip included) win a length tie -- matching
+ * buf_rt.h's contract.
  *
  * Invariant: accept[start] must be < 0. buf_rt.h relies on this with no
  * runtime guard -- a start state that accepts means some rule matches the
@@ -70,11 +70,11 @@
 extern "C" {
 #endif
 
-/* M3 spike (docs/performance.md): examples/clike.l -> 85 DFA states, 43
- * classes; the 103-rule examples/big.l -> 324 states, 76 classes, 24624
+/* M3 spike (docs/performance.md): examples/clike.bflo -> 85 DFA states, 43
+ * classes; the 103-rule examples/big.bflo -> 324 states, 76 classes, 24624
  * transitions, 2157 pooled indices. Every DFA arena is 6-140x inside its cap,
  * and the comptime wall is VM interpretation of the loops below (native
- * big.l: 1.8 ms; comptime: ~2.25 s), not arena size -- so the caps stay
+ * big.bflo: 1.8 ms; comptime: ~2.25 s), not arena size -- so the caps stay
  * generous. The find/closure rework in this file (hash index, generation-
  * stamped mark) already landed at M3; buf_dfa_minimize (Moore, below) is an
  * opt-in -D BUF_MINIMIZE pass that trims the state count a few percent but

@@ -2,7 +2,7 @@
  * t_dfa.c -- host unit tests for include/buffalo/buf_dfa.h.
  *
  * Plain `cc`, no cccc, but linked against runtime/buf_rt.c: the DFA is built
- * in-process from a `.l` spec, its four tables are handed straight to the
+ * in-process from a `.bflo` spec, its four tables are handed straight to the
  * real `buf_run` driver, and the token stream is asserted. That is the M5
  * generated/native parity check arriving early -- it pins the table layout
  * (`next[state*nclass + cls[byte]]`, `cls` totality, the `%skip` / -1
@@ -96,19 +96,19 @@ static int run_lex(const char *src, int len, int *kinds, int *lens, int max)
 static void test_cls_total(void)
 {
     int c, bad = 0;
-    if (build("examples/calc.l") != 0) return;
+    if (build("examples/calc.bflo") != 0) return;
     for (c = 0; c < 256; c++)
         if (dfa.cls[c] < 0 || dfa.cls[c] >= dfa.nclass) bad = 1;
     CHECK(!bad, "cls[] is total over 0..255, every entry in 0..nclass-1");
     CHECK(dfa.accept[dfa.start] < 0, "start state is non-accepting");
-    CHECK(dfa.nclass < 32, "calc.l collapses to well under 32 classes");
+    CHECK(dfa.nclass < 32, "calc.bflo collapses to well under 32 classes");
 }
 
 static void test_digits_parity(void)
 {
     int k[32], l[32], n;
     /* mirrors examples/digits_main.c expectations for the hand table */
-    if (build("examples/digits.l") != 0) return;
+    if (build("examples/digits.bflo") != 0) return;
 
     CHECK(dfa.rule_token[0] == BUF_TOK_FIRST_USER, "rule 0 -> TOK_INT value");
     CHECK(dfa.rule_token[1] == -1, "rule 1 (%skip) -> -1");
@@ -127,7 +127,7 @@ static void test_digits_parity(void)
 static void test_calc_stream(void)
 {
     int k[32], l[32], n;
-    if (build("examples/calc.l") != 0) return;
+    if (build("examples/calc.bflo") != 0) return;
 
     /* %tokens INT FLOAT IDENT PLUS STAR LPAREN RPAREN -> values 2..8 */
     n = run_lex("1 + 2.5 * foo", (int)strlen("1 + 2.5 * foo"), k, l, 32);
@@ -165,9 +165,9 @@ static void test_epsilon_cycle_dfa(void)
 static void test_clike(void)
 {
     int k[64], l[64], n;
-    if (build("examples/clike.l") != 0) return;
+    if (build("examples/clike.bflo") != 0) return;
 
-    CHECK(dfa.nclass < 64, "clike.l alphabet is far below 256 classes");
+    CHECK(dfa.nclass < 64, "clike.bflo alphabet is far below 256 classes");
     CHECK(dfa.accept[dfa.start] < 0, "clike start state is non-accepting");
 
     /* KW_IF is %tokens slot 0 -> value 2; IDENT is slot 8 -> value 10 */
@@ -211,7 +211,7 @@ static void test_clike(void)
  * discovery-order state ids, and (M3) a generation-stamped closure + hashed
  * state-set lookup that must not perturb either -- or the M5 generated/native
  * paths won't produce byte-identical tables. Build `path` twice and compare
- * the four tables. `big.l` (324 DFA states) is the regression guard for the
+ * the four tables. `big.bflo` (324 DFA states) is the regression guard for the
  * M3 DFA-construction rework. */
 static void test_determinism_of(const char *path)
 {
@@ -248,9 +248,9 @@ static void test_determinism_of(const char *path)
 
 static void test_determinism(void)
 {
-    test_determinism_of("examples/clike.l");
-    test_determinism_of("examples/json.l");
-    test_determinism_of("examples/big.l");
+    test_determinism_of("examples/clike.bflo");
+    test_determinism_of("examples/json.bflo");
+    test_determinism_of("examples/big.bflo");
 }
 
 /* Opt-in Moore minimisation (buf_dfa_minimize, gated by -D BUF_MINIMIZE in
@@ -305,11 +305,11 @@ static void min_pair(const char *path, const char *src)
 
 static void test_minimize(void)
 {
-    min_pair("examples/calc.l",  "1 + 2.5 * foo\n(a )# c\nbar");
-    min_pair("examples/clike.l", "if (x->y) { return 42; } /* c */ // z\niffy");
-    min_pair("examples/json.l",
+    min_pair("examples/calc.bflo",  "1 + 2.5 * foo\n(a )# c\nbar");
+    min_pair("examples/clike.bflo", "if (x->y) { return 42; } /* c */ // z\niffy");
+    min_pair("examples/json.bflo",
              "{\"a\": [1, -2.5e1, true, false, null], \"b\": \"c\\u00e9\"}");
-    min_pair("examples/big.l",
+    min_pair("examples/big.bflo",
              "int x = 0xFF; float y = 3.14e2;\n"
              "if (x >= y) x <<= 1; // done\nreturn \"hi\";\n");
 
@@ -387,9 +387,9 @@ int main(void)
            failures ? "FAIL" : "ok  ", checks, failures);
 
     printf("native per-phase timing (host cc, not cccc):\n");
-    time_phases("examples/calc.l");
-    time_phases("examples/clike.l");
-    time_phases("examples/big.l");
+    time_phases("examples/calc.bflo");
+    time_phases("examples/clike.bflo");
+    time_phases("examples/big.bflo");
 
     return failures ? 1 : 0;
 }

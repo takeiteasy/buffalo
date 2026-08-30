@@ -13,7 +13,7 @@
  * This file is the boundary: buf_rx.h / buf_tokcheck.h never call
  * MacroErrorAt (they must also build under a plain `cc` for the host unit
  * tests), so they accumulate a sticky first-wins error string, and this
- * file lifts that string into a comptime diagnostic pointed at the .l file.
+ * file lifts that string into a comptime diagnostic pointed at the .bflo file.
  *
  * A successful run reads the spec, validates the token header, builds the
  * NFA (buf_nfa.h) then the DFA (buf_dfa.h), and emits the four `static
@@ -36,12 +36,12 @@
  * Invocation (see bin/buffalo and docs/getting-started.md):
  *
  *   cccc -c=generated src/buf_comptime.c -Iinclude/buffalo -Iruntime \
- *       -D BUF_SPEC='"examples/calc.l"' -o examples/calc.l.gen.c
+ *       -D BUF_SPEC='"examples/calc.bflo"' -o examples/calc.bflo.gen.c
  *
  * -D rather than a source #define: comptime bodies do not see ordinary
  * source #define's. BUF_SPEC is required. BUF_TOKENS_H is optional -- when
- * absent it is derived from BUF_SPEC by dropping a trailing ".l" and
- * appending "_tokens.h" (examples/calc.l -> examples/calc_tokens.h).
+ * absent it is derived from BUF_SPEC by dropping a trailing ".bflo" and
+ * appending "_tokens.h" (examples/calc.bflo -> examples/calc_tokens.h).
  */
 #include @shared "buf_rt.h"
 #include @comptime "buf_rx.h"
@@ -53,7 +53,7 @@
 #include @comptime <string.h>
 
 #ifndef BUF_SPEC
-#define BUF_SPEC "examples/calc.l"
+#define BUF_SPEC "examples/calc.bflo"
 #endif
 
 /* M3 ablation ladder -- see the header comment. 5 (full pipeline) by default. */
@@ -81,12 +81,19 @@ void buf_compile(void) {
         tokens_h[k] = '\0';
     }
 #else
-    /* derive from the spec path: strip a trailing ".l", append "_tokens.h" */
+    /* derive from the spec path: strip a trailing ".bflo", append "_tokens.h" */
     {
         const char *suffix = "_tokens.h";
-        int         n = 0, base, i;
+        const char *ext    = ".bflo";
+        int         n = 0, extlen = 0, base, matches = 0, i;
         while (spec[n]) n++;
-        base = (n >= 2 && spec[n - 2] == '.' && spec[n - 1] == 'l') ? n - 2 : n;
+        while (ext[extlen]) extlen++;
+        if (n >= extlen) {
+            matches = 1;
+            for (i = 0; i < extlen; i++)
+                if (spec[n - extlen + i] != ext[i]) { matches = 0; break; }
+        }
+        base = matches ? n - extlen : n;
         for (i = 0; i < base && k < (int)sizeof(tokens_h) - 1; i++)
             tokens_h[k++] = spec[i];
         for (i = 0; suffix[i] && k < (int)sizeof(tokens_h) - 1; i++)

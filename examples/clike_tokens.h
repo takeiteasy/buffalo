@@ -1,9 +1,9 @@
 /*
  * clike_tokens.h -- checked in; the comptime pass validates this against
- * examples/clike.l (%tokens list and order) and errors on drift.
+ * examples/clike.bflo (%tokens list and order) and errors on drift.
  *
  * TOK_EOF = 0 and TOK_ERROR = 1 are reserved (see BUF_TOK_* in buf_rt.h).
- * The remaining constants follow clike.l's %tokens line, in order.
+ * The remaining constants follow clike.bflo's %tokens line, in order.
  */
 #ifndef CLIKE_TOKENS_H
 #define CLIKE_TOKENS_H

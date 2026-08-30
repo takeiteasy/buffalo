@@ -1,9 +1,9 @@
 /*
  * json_tokens.h -- checked in; the comptime pass validates this against
- * examples/json.l (%tokens list and order) and errors on drift.
+ * examples/json.bflo (%tokens list and order) and errors on drift.
  *
  * TOK_EOF = 0 and TOK_ERROR = 1 are reserved (see BUF_TOK_* in buf_rt.h).
- * The remaining constants follow json.l's %tokens line, in order.
+ * The remaining constants follow json.bflo's %tokens line, in order.
  */
 #ifndef JSON_TOKENS_H
 #define JSON_TOKENS_H

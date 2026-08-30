@@ -5,29 +5,13 @@ A lexer and parser generator that runs entirely inside
 
 A spec file is read at compile time, compiled to DFA/parser tables, and lowered
 to plain C. The generated C builds and runs with a stock `cc` — no `cccc`, no
-external `lex`/`yacc` binary, no `.l → .c` build step, no checked-in generated
-file.
+external `lex`/`yacc` binary, no `.bflo → .c` build step, no checked-in
+generated file.
 
-- **lex** — `.l` spec (`%tokens` + `NAME regex` rules) → DFA tables + a
+- **lex** — `.bflo` spec (`%tokens` + `NAME regex` rules) → DFA tables + a
   `buf_next()` driver.
-- **parse** — `.y` grammar → parser tables. *(Phase 2, not implemented.)*
-
-## Status
-
-**M5 — example suite + generated/native parity.** `bin/buffalo lex` reads a
-`.l` spec at compile time into a regex AST with `line:col` diagnostics,
-validates the checked-in `<name>_tokens.h` against the `%tokens` list, runs
-Thompson construction (regex AST → ε-NFA) and subset construction (ε-NFA →
-DFA over alphabet equivalence classes), and emits four `static const` DFA
-tables plus a `buf_next` wrapper into the generated `.gen.c` — all inside
-cccc's comptime pass. That file then builds with a stock `cc` against
-`runtime/buf_rt.c` and an example `_main.c` (`make generated`), and
-`cccc -c=native` does the whole thing in one invocation (`make native`); the
-two outputs are byte-identical. Four worked examples (`digits`, `calc`,
-`clike`, `json`) each ship a spec, a token header, a driver, and a golden
-diff, all run by `make check`. Comptime cost is ~0.38 s for a ~45-rule
-lexer, emission free (see [docs/performance.md](docs/performance.md)). See
-[ROADMAP.md](ROADMAP.md).
+- **parse** — grammar productions in the same `.bflo` file → parser tables.
+  *(Not implemented yet.)*
 
 ## Build
 
@@ -42,10 +26,9 @@ make bench      # per-phase comptime-cost measurement (needs cccc + perl)
 
 ## Docs
 
-- [ROADMAP.md](ROADMAP.md) — milestones M1–M6, Phase 1.5, Phase 2.
 - [docs/design.md](docs/design.md) — the two-universe split, decision log, known limitations.
-- [docs/performance.md](docs/performance.md) — the M3 comptime-cost measurement and how to re-run it.
-- [docs/lex-spec-format.md](docs/lex-spec-format.md) — the `.l` spec reference.
+- [docs/performance.md](docs/performance.md) — the comptime-cost measurement and how to re-run it.
+- [docs/lex-spec-format.md](docs/lex-spec-format.md) — the `.bflo` spec reference.
 - [docs/getting-started.md](docs/getting-started.md) — building a spec end to end.
 
 ## License

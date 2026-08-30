@@ -1,7 +1,7 @@
 /*
  * t_rx.c -- host unit tests for include/buffalo/buf_rx.h.
  *
- * Plain `cc`, no cccc. Exercises the .l spec layer, the regex grammar, the
+ * Plain `cc`, no cccc. Exercises the .bflo spec layer, the regex grammar, the
  * per-node line:col tracking, and the empty-match (nullable) rejection.
  */
 #include <stdio.h>
@@ -58,15 +58,15 @@ static void test_calc_spec(void)
                                   "STAR", "LPAREN", "RPAREN" };
     int i, rc;
 
-    rc = buf_rx_read_file(&rx, "examples/calc.l");
-    CHECK(rc == 0, "examples/calc.l parses cleanly");
+    rc = buf_rx_read_file(&rx, "examples/calc.bflo");
+    CHECK(rc == 0, "examples/calc.bflo parses cleanly");
     if (rc != 0) { printf("  -> %s\n", rx.error); return; }
 
-    CHECK(rx.token_count == 7, "calc.l has 7 %tokens");
+    CHECK(rx.token_count == 7, "calc.bflo has 7 %tokens");
     for (i = 0; i < 7 && i < rx.token_count; i++)
-        CHECK(strcmp(rx.tokens[i], want[i]) == 0, "calc.l %tokens order");
+        CHECK(strcmp(rx.tokens[i], want[i]) == 0, "calc.bflo %tokens order");
 
-    CHECK(rx.rule_count == 9, "calc.l has 9 rules (7 named + 2 %skip)");
+    CHECK(rx.rule_count == 9, "calc.bflo has 9 rules (7 named + 2 %skip)");
     CHECK(strcmp(rx.rules[0].name, "INT") == 0, "rule 0 is INT");
     CHECK(rx.rules[0].is_skip == 0, "rule 0 is not %skip");
     CHECK(rx.rules[0].tok_index == 0, "rule 0 maps to %tokens slot 0");

@@ -25,7 +25,7 @@ static int checks   = 0;
 static BufRx rx;
 static BufTc tc;
 
-/* calc.l's %tokens list, in a spec small enough to inline. */
+/* calc.bflo's %tokens list, in a spec small enough to inline. */
 static const char *CALC_SPEC =
     "%tokens INT FLOAT IDENT PLUS STAR LPAREN RPAREN\n"
     "INT    [0-9]+\n"
@@ -60,11 +60,11 @@ int main(void)
     /* the real checked-in header against the real spec */
     {
         int rc;
-        CHECK(buf_rx_read_file(&rx, "examples/calc.l") == 0, "calc.l parses");
+        CHECK(buf_rx_read_file(&rx, "examples/calc.bflo") == 0, "calc.bflo parses");
         CHECK(buf_tc_read_file(&tc, "examples/calc_tokens.h") == 0,
               "calc_tokens.h reads");
         rc = buf_tc_check(&tc, &rx);
-        CHECK(rc == 0, "examples/calc_tokens.h agrees with examples/calc.l");
+        CHECK(rc == 0, "examples/calc_tokens.h agrees with examples/calc.bflo");
         if (rc != 0) printf("  -> %s\n", tc.error);
     }
 

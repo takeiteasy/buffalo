@@ -10,7 +10,7 @@
  *
  * Token kinds are `enum` constants -- not linkable symbols -- so the header
  * is hand-written and checked in, and this pass guards it against drift from
- * the .l spec. The check: the first `enum { ... }` in the header must list,
+ * the .bflo spec. The check: the first `enum { ... }` in the header must list,
  * in order,
  *
  *     TOK_EOF = 0, TOK_ERROR = 1, TOK_<N0>, TOK_<N1>, ...

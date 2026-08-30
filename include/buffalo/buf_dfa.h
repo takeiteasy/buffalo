@@ -33,6 +33,21 @@
  * out in worklist discovery order only. See docs/performance.md for why this
  * matters (comptime-VM cost).
  *
+ * Minimisation (opt-in). With -D BUF_MINIMIZE, buf_dfa_build runs a Moore
+ * partition-refinement pass (buf_dfa_minimize) over the finished subset
+ * construction: initial blocks keyed on the exact accept[] value (so "earlier
+ * rule wins" survives a merge), a dead transition (-1) compared as its own
+ * signature entry, and deterministic renumbering by each block's least old
+ * state id -- which keeps start == 0 and lets next[]/accept[] compact in
+ * place with no shadow arena. It is OFF by default: for real lexer specs it
+ * only trims ~5-8% of states (subset construction already lands near the
+ * minimal DFA) and it does NOT cut subset-construction cost -- it adds its
+ * own pass to the comptime hot path, a net loss on large specs. See
+ * docs/performance.md for the measured trade. Once it has run the pool /
+ * set_off / set_len / hash_* fields describe the pre-minimisation states and
+ * are stale -- nothing downstream reads them, only the four emitted tables +
+ * nstates / nclass / start.
+ *
  * Ties: accept[s] is the lowest rule index among the NFA accept states in
  * s's set, so earlier rules (%skip included) win a length tie -- matching the
  * ROADMAP and buf_rt.h's contract.
@@ -61,8 +76,9 @@ extern "C" {
  * and the comptime wall is VM interpretation of the loops below (native
  * big.l: 1.8 ms; comptime: ~2.25 s), not arena size -- so the caps stay
  * generous. The find/closure rework in this file (hash index, generation-
- * stamped mark) already landed at M3; cutting the cost further means cutting
- * the state count (Hopcroft minimisation, Phase 1.5). */
+ * stamped mark) already landed at M3; buf_dfa_minimize (Moore, below) is an
+ * opt-in -D BUF_MINIMIZE pass that trims the state count a few percent but
+ * does not touch this cost. */
 #define BUF_DFA_MAX_STATES  4096
 #define BUF_DFA_MAX_CLASSES 256             /* worst case; typically 20-40  */
 #define BUF_DFA_MAX_TRANS   (BUF_DFA_MAX_STATES * 64)  /* == MAX_STATES*64  */
@@ -99,6 +115,16 @@ typedef struct {
     int    scratch[BUF_NFA_MAX_STATES];     /* closure worklist             */
     unsigned mark[BUF_NFA_MAX_STATES];      /* closure visited: mark==mark_gen */
     unsigned mark_gen;                      /* bumped per closure, not cleared */
+
+    /* --- Moore minimisation scratch (buf_dfa_minimize) ----------------- */
+    int    mblk[BUF_DFA_MAX_STATES];        /* current block id per state   */
+    int    mblk_prev[BUF_DFA_MAX_STATES];   /* per-pass block-id snapshot   */
+    int    morder[BUF_DFA_MAX_STATES];      /* states bucket-sorted by block */
+    int    mblk_start[BUF_DFA_MAX_STATES];  /* per-block base in morder      */
+    int    msub_rep[BUF_DFA_MAX_STATES];    /* sub-block representative state */
+    int    msub_id[BUF_DFA_MAX_STATES];     /* sub-block index -> block id   */
+    int    mnewid[BUF_DFA_MAX_STATES];      /* old state id -> minimised id  */
+    int    nstates_premin;                  /* nstates before minimisation  */
 
     char error[BUF_RX_ERR_MAX];
     int  has_error;
@@ -275,6 +301,7 @@ static void buf_dfa_init(BufDfa *dfa, BufRx *rx) {
     int i;
     dfa->nclass    = 0;
     dfa->nstates   = 0;
+    dfa->nstates_premin = 0;
     dfa->nrules    = 0;
     dfa->start     = 0;
     dfa->pool_used = 0;
@@ -292,8 +319,126 @@ static void buf_dfa_init(BufDfa *dfa, BufRx *rx) {
 #endif
 }
 
-/* Build the DFA tables from a constructed NFA. Returns 0 / -1. */
-static int buf_dfa_build(BufDfa *dfa, BufNfa *nfa, BufRx *rx) {
+/* --- Moore minimisation ------------------------------------------------
+ *
+ * Coarsest partition refinement over the finished DFA. Cost is
+ * O(passes * nstates * nclass) with `passes` a handful (blocks are tiny once
+ * the accept[] split is in). All scratch lives in BufDfa -- no malloc, no
+ * recursion. Rewrites next[] / accept[] / nstates / start in place.
+ *
+ * Signature of a state = the tuple of its transition targets' block ids, with
+ * a dead edge (-1) carried as the sentinel -1. Two states in one block split
+ * apart when their signatures differ; the pass reads a frozen snapshot
+ * (mblk_prev) so splits within a pass do not perturb each other.
+ *
+ * Renumber: new ids in ascending order of each block's least old state id.
+ * Deterministic (needed for the two cccc build paths to stay byte-identical),
+ * puts state 0's block at id 0 so `start` stays 0, and makes the old-id of
+ * new state m always >= m -- so next[]/accept[] compact in place, low to
+ * high, with no shadow arena. */
+static void buf_dfa_minimize(BufDfa *dfa) {
+    int n  = dfa->nstates;
+    int nc = dfa->nclass;
+    int s, k, b, m, nblk, pass_nblk, nnew;
+
+    if (n <= 1) return;
+
+    /* initial partition: one block per distinct accept[] value, ids handed
+     * out in first-appearance order over state ids (deterministic). */
+    {
+        int acc2blk[BUF_RX_MAX_RULES + 1];   /* accept[] is -1 .. nrules-1 */
+        int a;
+        for (a = 0; a <= dfa->nrules; a++) acc2blk[a] = -1;
+        nblk = 0;
+        for (s = 0; s < n; s++) {
+            a = dfa->accept[s] + 1;
+            if (acc2blk[a] < 0) acc2blk[a] = nblk++;
+            dfa->mblk[s] = acc2blk[a];
+        }
+    }
+
+    /* refine until the block count stops growing */
+    for (;;) {
+        pass_nblk = nblk;
+        for (s = 0; s < n; s++) dfa->mblk_prev[s] = dfa->mblk[s];
+
+        /* bucket-sort states into morder[] by block; within a bucket the
+         * order is ascending state id (s scanned low..high below). */
+        for (b = 0; b < nblk; b++) dfa->mblk_start[b] = 0;
+        for (s = 0; s < n; s++) dfa->mblk_start[dfa->mblk_prev[s]]++;
+        {
+            int acc = 0, t;
+            for (b = 0; b < nblk; b++) {
+                t = dfa->mblk_start[b];
+                dfa->mblk_start[b] = acc;
+                acc += t;
+            }
+        }
+        for (b = 0; b < nblk; b++) dfa->mnewid[b] = dfa->mblk_start[b]; /* cursors */
+        for (s = 0; s < n; s++)
+            dfa->morder[dfa->mnewid[dfa->mblk_prev[s]]++] = s;
+
+        nnew = nblk;
+        for (b = 0; b < nblk; b++) {
+            int lo = dfa->mblk_start[b];
+            int hi = (b + 1 < nblk) ? dfa->mblk_start[b + 1] : n;
+            int nsub = 0;
+            for (m = lo; m < hi; m++) {
+                int st = dfa->morder[m], j, found = -1;
+                for (j = 0; j < nsub; j++) {
+                    int rp = dfa->msub_rep[j], eq = 1;
+                    for (k = 0; k < nc; k++) {
+                        int ts = dfa->next[st * nc + k];
+                        int tr = dfa->next[rp * nc + k];
+                        int bs = (ts < 0) ? -1 : dfa->mblk_prev[ts];
+                        int br = (tr < 0) ? -1 : dfa->mblk_prev[tr];
+                        if (bs != br) { eq = 0; break; }
+                    }
+                    if (eq) { found = j; break; }
+                }
+                if (found >= 0) {
+                    dfa->mblk[st] = dfa->msub_id[found];
+                } else {
+                    int nb = (nsub == 0) ? b : nnew++;
+                    dfa->msub_rep[nsub] = st;
+                    dfa->msub_id[nsub]  = nb;
+                    nsub++;
+                    dfa->mblk[st] = nb;
+                }
+            }
+        }
+        nblk = nnew;
+        if (nblk == pass_nblk) break;
+    }
+
+    /* renumber + in-place compaction */
+    {
+        int *blk_newid = dfa->mblk_start;   /* reuse: block id -> new state id */
+        int *rep_old   = dfa->morder;       /* reuse: new state id -> old id   */
+        for (b = 0; b < nblk; b++) blk_newid[b] = -1;
+        nnew = 0;
+        for (s = 0; s < n; s++) {
+            b = dfa->mblk[s];
+            if (blk_newid[b] < 0) { blk_newid[b] = nnew; rep_old[nnew] = s; nnew++; }
+        }
+        for (s = 0; s < n; s++) dfa->mnewid[s] = blk_newid[dfa->mblk[s]];
+
+        for (m = 0; m < nnew; m++) {
+            int src = rep_old[m];           /* always >= m */
+            for (k = 0; k < nc; k++) {
+                int t = dfa->next[src * nc + k];
+                dfa->next[m * nc + k] = (short)((t < 0) ? -1 : dfa->mnewid[t]);
+            }
+            dfa->accept[m] = dfa->accept[src];
+        }
+        dfa->nstates = nnew;
+        dfa->start   = dfa->mnewid[0];      /* == 0 */
+    }
+}
+
+/* Build the DFA tables from a constructed NFA. `minimize` runs the Moore pass
+ * above before returning. Returns 0 / -1. */
+static int buf_dfa_build_ex(BufDfa *dfa, BufNfa *nfa, BufRx *rx, int minimize) {
     int r, si, k, j, seed0, len;
 
     buf_dfa_init(dfa, rx);
@@ -376,7 +521,32 @@ static int buf_dfa_build(BufDfa *dfa, BufNfa *nfa, BufRx *rx) {
                        "(DFA start state accepts)");
         return -1;
     }
+
+    dfa->nstates_premin = dfa->nstates;
+    if (minimize) {
+        buf_dfa_minimize(dfa);
+        if (dfa->accept[dfa->start] >= 0) {   /* defensive -- cannot happen */
+            buf_dfa_err(dfa, "internal: minimised start state accepts");
+            return -1;
+        }
+    }
     return dfa->has_error ? -1 : 0;
+}
+
+/* Default entry: minimisation is OFF unless -D BUF_MINIMIZE. It shrinks the
+ * DFA only ~5-8% for real lexer specs (subset construction already lands near
+ * the minimal DFA) while adding its own O(passes*nstates*nclass) pass to the
+ * comptime hot path -- net negative on the large specs it was meant to help,
+ * see docs/performance.md. Kept opt-in for the cases that want the smaller
+ * table and can spend the compile time. Comptime bodies see only command-line
+ * -D, not a source #define, so bench.sh / `buffalo lex -- -D BUF_MINIMIZE`
+ * pass it; host tests call buf_dfa_build_ex directly. */
+static int buf_dfa_build(BufDfa *dfa, BufNfa *nfa, BufRx *rx) {
+#ifdef BUF_MINIMIZE
+    return buf_dfa_build_ex(dfa, nfa, rx, 1);
+#else
+    return buf_dfa_build_ex(dfa, nfa, rx, 0);
+#endif
 }
 
 #ifdef __cplusplus

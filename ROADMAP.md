@@ -62,9 +62,10 @@ Result (aarch64-darwin, cccc 0.1.0, `-O2`; measured on `clike.l` — 45 rules,
 324-state fixture added for the spike):
 
 - **added compile time for `clike.l`, emit included: ~0.38 s** over a ~0.31 s
-  no-op comptime baseline. Gate was < 1 s → **GO**. `big.l`: ~2.25 s — a
-  lexer that size wants Phase 1.5's DFA minimisation first, but M4's targets
-  (`calc`, `clike`) are well inside the gate.
+  no-op comptime baseline. Gate was < 1 s → **GO**. `big.l`: ~2.25 s — past
+  the gate, and Phase 1.5's DFA minimisation turned out not to move that (it
+  only trims a few percent of states and adds its own comptime pass — see
+  `docs/performance.md`); M4's targets (`calc`, `clike`) are well inside it.
 - **emission is free** at every size — raw init-data blobs + one wrapper fn,
   lost in the noise. The `GlobalVar` + `memcpy` bet paid off.
 - the entire cost is the **DFA construction phase**, and it is cccc-VM
@@ -127,9 +128,14 @@ log.
 
 - Switch-based (`re2c`-style) emission as an alternative to table mode; same spec
   input and generated API either way.
-- **DFA minimisation (Hopcroft).** M3 showed comptime cost is superlinear in
-  DFA state count (~2.25 s for `examples/big.l`'s 324 states); minimisation is
-  the lever that attacks the count itself and lifts the ~150-state ceiling.
+- **DFA minimisation — done, shipped opt-in.** Moore partition refinement
+  (`buf_dfa_minimize`, `-D BUF_MINIMIZE`). It does *not* lift the comptime
+  ceiling the M3 spike found: subset construction already lands within ~4–8 %
+  of the minimal DFA for real lexer specs, and the pass runs after (and adds
+  to) the expensive phase. Off by default; kept for callers that want the
+  smaller table. Full numbers and rationale in `docs/performance.md`.
+  Follow-up left open: the `buf_dfa_partition` `node_count × nclass × 256`
+  sweep, which *is* on the comptime hot path.
 - `{n,m}` repetition counts.
 - Line anchors `^ $`.
 - `--emit-tokens` mode: write the `<name>_tokens.h` instead of validating a

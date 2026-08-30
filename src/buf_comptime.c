@@ -29,6 +29,8 @@
  *       class count, transition-table size) to stderr after the DFA build.
  *       buf_dfa.h's own -D BUF_DFA_STATS adds closure-call / find-compare
  *       counters on top.
+ *   -D BUF_MINIMIZE      run buf_dfa.h's opt-in Moore minimisation pass after
+ *       the subset construction (off by default -- see docs/performance.md).
  *
  * Invocation (see bin/buffalo and docs/getting-started.md):
  *
@@ -127,7 +129,7 @@ void buf_compile(void) {
             "  rx    nodes   %6d / %d\n"
             "  rx    rules   %6d / %d\n"
             "  nfa   states  %6d / %d\n"
-            "  dfa   states  %6d / %d\n"
+            "  dfa   states  %6d / %d  (pre-min %d)\n"
             "  dfa   classes %6d / 256\n"
             "  dfa   trans   %6d / %d  (nstates*nclass)\n"
             "  dfa   pool    %6d / %d\n",
@@ -135,7 +137,7 @@ void buf_compile(void) {
             rx.node_count,  BUF_RX_MAX_NODES,
             rx.rule_count,  BUF_RX_MAX_RULES,
             nfa.state_count, BUF_NFA_MAX_STATES,
-            dfa.nstates,    BUF_DFA_MAX_STATES,
+            dfa.nstates,    BUF_DFA_MAX_STATES, dfa.nstates_premin,
             dfa.nclass,
             dfa.nstates * dfa.nclass, BUF_DFA_MAX_TRANS,
             dfa.pool_used,  BUF_DFA_SET_POOL);

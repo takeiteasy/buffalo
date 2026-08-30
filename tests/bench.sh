@@ -62,13 +62,13 @@ run_once() {
     cat "$BENCH_T"
 }
 
-# Median of REPS timed runs.
+# Median of REPS timed runs. $3 is an optional extra -D passed to every run.
 median_of() {
-    _spec=$1; _stop=$2
+    _spec=$1; _stop=$2; _mextra=${3:-}
     i=0
     _vals=""
     while [ "$i" -lt "$REPS" ]; do
-        _v=$(run_once "$_spec" "$_stop" "") || { echo "FAIL"; return 1; }
+        _v=$(run_once "$_spec" "$_stop" "$_mextra") || { echo "FAIL"; return 1; }
         _vals="$_vals$_v
 "
         i=$((i + 1))
@@ -94,8 +94,15 @@ for spec in $SPECS; do
         db=$(awk -v a="$m" -v b="$base" 'BEGIN{printf "%+.3f", a-b}')
         dp=$(awk -v a="$m" -v b="$prev" 'BEGIN{if(b=="")print "-";else printf "%+.3f", a-b}')
         printf '  %-14s %8s %10s %10s\n' "$n $label" "$m" "$db" "$dp"
+        if [ "$n" -eq 4 ]; then dfa_m=$m; fi
         prev=$m
     done
+
+    # Opt-in Moore minimisation (-D BUF_MINIMIZE): its own added comptime cost,
+    # measured against the +DFA rung. Off by default -- docs/performance.md.
+    mm=$(median_of "$spec" 4 "-D BUF_MINIMIZE") || exit 1
+    dpm=$(awk -v a="$mm" -v b="$dfa_m" 'BEGIN{printf "%+.3f", a-b}')
+    printf '  %-14s %8s %10s %10s\n' "4 +DFA+min" "$mm" "" "$dpm"
 
     # Arena peaks + generated-file size for the full pipeline.
     echo

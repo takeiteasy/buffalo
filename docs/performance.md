@@ -27,11 +27,12 @@ so the ceiling is explicit:
 
 A lexer up to `clike.l`'s size is comfortably affordable. Interpolating
 between the measured 85-state (+0.38 s) and 324-state (+2.25 s) points, ~150
-DFA states — the band ticket 9 projected — lands near the 1 s gate; a
-100+-rule grammar in the 300-state range wants the Phase 1.5 DFA-minimisation
-work (Hopcroft) first, since that attacks the state count itself. Emission is
-free at every size — raw `GlobalVarSetInitData` blobs plus one `Quote()`d
-wrapper, lost in the noise.
+DFA states lands near the 1 s gate; a 100+-rule grammar in the 300-state
+range is past it. Emission is free at every size — raw `GlobalVarSetInitData`
+blobs plus one `Quote()`d wrapper, lost in the noise.
+
+DFA minimisation does **not** move this ceiling, and the opt-in Moore pass
+(next section) measures why.
 
 Only `calc.l` and `clike.l` run through the comptime VM in `make check` (the
 `spec` target); `big.l`'s comptime path is reachable through
@@ -53,8 +54,10 @@ Only `calc.l` and `clike.l` run through the comptime VM in `make check` (the
 
 `-D BUF_STATS` prints arena peaks to stderr after the DFA build;
 `-D BUF_DFA_STATS` (in `buf_dfa.h`) adds closure-call and state-set-compare
-counters. `tests/bench.sh` walks the ladder for each spec, N reps, and reports
-the median wall time and the per-phase delta:
+counters. `-D BUF_MINIMIZE` runs the opt-in Moore minimisation pass after
+subset construction (see "DFA minimisation" below). `tests/bench.sh` walks the
+ladder for each spec, N reps, and reports the median wall time and the
+per-phase delta, plus a `4 +DFA+min` row for the minimisation cost:
 
 ```sh
 make bench                     # calc.l + clike.l
@@ -119,8 +122,41 @@ M5's generated/native parity) is unchanged and is regression-tested on
 What is left in `big.l`'s 2.25 s is spread across `buf_dfa_partition`
 (`node_count × nclass × 256` refinement sweep), the ~11,700 structural closure
 calls, and the subset loop's set scans — no single remaining hot spot.
-Cutting it further means cutting the DFA state count: **Hopcroft
-minimisation**, already scoped for Phase 1.5.
+
+## DFA minimisation — measured, kept opt-in
+
+The obvious next lever looked like cutting the DFA state count itself with
+Hopcroft/Moore minimisation. It was implemented (Moore partition refinement,
+`buf_dfa_minimize` in `buf_dfa.h`, gated by `-D BUF_MINIMIZE`) and measured.
+The result is that it is **not worth running by default**:
+
+State count and `.gen.c` size are the `-D BUF_MINIMIZE` build vs. the default;
+the comptime column is the `+DFA` phase delta (`bench.sh`'s `d(phase)`) with
+minimisation off, then on:
+
+| spec | DFA states | `.gen.c` bytes | `+DFA` phase | `+DFA` with `-D BUF_MINIMIZE` |
+|---|---|---|---|---|
+| `calc.l` | 13 → 11 | 2221 → 2134 | +0.021 s | +0.021 s |
+| `clike.l` | 85 → 78 | 16788 → 15475 | +0.374 s | +0.390 s |
+| `big.l` | 324 → 310 | 102745 → 97621 | +2.19 s | **+2.52 s** |
+
+Two things sink it:
+
+1. **Subset construction already lands near the minimal DFA.** A lexer's DFA
+   is pre-split by winning rule (`accept[s]` is a distinct value per rule, so
+   `big.l` starts refinement with ~103 blocks), and the only merges left are
+   non-accepting prefix states and identical rule tails — 4–8 % of the states.
+2. **Minimisation runs *after* the expensive phase and adds to it.** It is an
+   `O(passes · nstates · nclass)` pass over the finished DFA, interpreted at
+   the same ~1000× VM multiplier, so on `big.l` it *adds* ~0.33 s to the phase
+   it was meant to relieve. The `.gen.c` shrinks ~5 %, but downstream stock
+   `cc -O2 -c` on that file is ~0.03 s either way — no measurable win there.
+
+So the pass ships **off by default**. `buffalo lex … -- -D BUF_MINIMIZE` (or
+`buf_dfa_build_ex(dfa, nfa, rx, 1)` from host code) turns it on for the cases
+that want the smaller table and can spend the compile time; `tests/bench.sh`
+reports its added cost as the `4 +DFA+min` row. Cutting `big.l`'s 2.25 s for
+real means the `buf_dfa_partition` sweep, not minimisation.
 
 ### Arena peaks
 

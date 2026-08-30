@@ -54,6 +54,15 @@ cccc's identifier resolver unless that extern arrived via `@shared`.
   (`tok_index + BUF_TOK_FIRST_USER`), or `-1` for `%skip`. Construction ends by
   asserting `accept[start] < 0` — the contract `buf_run` relies on with no
   runtime guard — and reports a violation at the offending rule's `line:col`.
+  An **opt-in** Moore minimisation pass (`buf_dfa_minimize`, `-D BUF_MINIMIZE`)
+  can then run: initial blocks keyed on the exact `accept[]` value so "earlier
+  rule wins" survives a merge, a dead edge (`-1`) compared as its own
+  signature entry, and renumbering by each block's least old state id — which
+  keeps `start == 0` and lets `next[]` / `accept[]` compact in place. It is
+  off by default because it only trims ~4–8 % of states for real lexer specs
+  (subset construction already lands near the minimal DFA) while adding its
+  own `O(passes · nstates · nclass)` pass to the comptime hot path — see
+  [performance.md](performance.md).
 - `buf_emit.h` — DFA → four file-scope tables (raw `GlobalVarSetInitData`
   blobs) + the `buf_next` wrapper fn. Unlike the other comptime headers this
   one uses cccc's reflection builtins and is never dual-compiled by a plain
@@ -204,5 +213,7 @@ derivation when `BUF_TOKENS_H` is undefined.
   for Phase 1.
 - **Bytes only, no Unicode.** Input is bytes; UTF-8 is the caller's problem
   (multibyte sequences pass through inside identifiers/strings as raw bytes).
-- **No DFA minimisation in Phase 1** (alphabet equivalence classes are in M2;
-  Hopcroft minimisation is Phase 1.5).
+- **DFA minimisation is opt-in and rarely worth it.** Alphabet equivalence
+  classes (M2) do the load-bearing table shrink; the Moore minimisation pass
+  (`-D BUF_MINIMIZE`) trims only a few percent more and costs comptime it does
+  not earn back. Left in for callers that want the smallest possible table.

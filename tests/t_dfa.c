@@ -38,6 +38,7 @@ static BufRx  rx;
 static BufNfa nfa;
 static BufDfa dfa;
 static BufDfa dfa2;   /* second build, for the determinism check */
+static BufDfa dfa_um; /* unminimised build, for the minimisation check */
 
 static int build_string(const char *spec)
 {
@@ -67,16 +68,16 @@ static int build(const char *path)
     return 0;
 }
 
-/* Run the real buf_run over `src` using the freshly built dfa tables. */
-static int run_lex(const char *src, int len, int *kinds, int *lens, int max)
+/* Run the real buf_run over `src` using an explicit dfa's tables. */
+static int run_lex_on(const BufDfa *d, const char *src, int len,
+                      int *kinds, int *lens, int max)
 {
     BufLexer lx;
     int n = 0;
     buf_lexer_init(&lx, src, len);
     for (;;) {
-        BufToken tk = buf_run(&lx, dfa.cls, dfa.next, dfa.accept,
-                              dfa.rule_token, dfa.nstates, dfa.nclass,
-                              dfa.start);
+        BufToken tk = buf_run(&lx, d->cls, d->next, d->accept,
+                              d->rule_token, d->nstates, d->nclass, d->start);
         if (tk.kind == BUF_TOK_EOF) break;
         if (n >= max) break;
         kinds[n] = tk.kind;
@@ -84,6 +85,12 @@ static int run_lex(const char *src, int len, int *kinds, int *lens, int max)
         n++;
     }
     return n;
+}
+
+/* Run the real buf_run over `src` using the freshly built file-scope dfa. */
+static int run_lex(const char *src, int len, int *kinds, int *lens, int max)
+{
+    return run_lex_on(&dfa, src, len, kinds, lens, max);
 }
 
 static void test_cls_total(void)
@@ -245,6 +252,86 @@ static void test_determinism(void)
     test_determinism_of("examples/big.l");
 }
 
+/* Opt-in Moore minimisation (buf_dfa_minimize, gated by -D BUF_MINIMIZE in
+ * the comptime build; here driven directly via buf_dfa_build_ex). It must
+ * never change the recognised language or the winning rule -- so the token
+ * stream through the minimised tables must match the unminimised ones
+ * exactly -- and it must only ever remove states, deterministically. */
+static void min_pair(const char *path, const char *src)
+{
+    int ku[128], lu[128], km[128], lm[128], nu, nm, i, slen = (int)strlen(src);
+
+    if (buf_rx_read_file(&rx, path) != 0) { printf("  (skip %s)\n", path); return; }
+    if (buf_nfa_build(&nfa, &rx) != 0)    { printf("  -> %s\n", nfa.error); return; }
+
+    CHECK(buf_dfa_build_ex(&dfa_um, &nfa, &rx, 0) == 0, "unminimised DFA builds");
+    CHECK(buf_dfa_build_ex(&dfa,    &nfa, &rx, 1) == 0, "minimised DFA builds");
+
+    CHECK(dfa.nstates <= dfa_um.nstates, "minimisation never adds states");
+    CHECK(dfa.nstates_premin == dfa_um.nstates,
+          "nstates_premin records the pre-minimisation count");
+    CHECK(dfa.accept[dfa.start] < 0, "minimised start state is non-accepting");
+    CHECK(dfa.nclass == dfa_um.nclass && dfa.nrules == dfa_um.nrules,
+          "minimisation leaves classes and rules alone");
+
+    nu = run_lex_on(&dfa_um, src, slen, ku, lu, 128);
+    nm = run_lex_on(&dfa,    src, slen, km, lm, 128);
+    CHECK(nu == nm, "same token count before/after minimisation");
+    if (nu == nm) {
+        for (i = 0; i < nu; i++)
+            if (ku[i] != km[i] || lu[i] != lm[i]) break;
+        CHECK(i == nu, "identical (kind,length) stream before/after minimisation");
+    }
+
+    /* determinism of the minimised tables: build a second time, compare */
+    {
+        static BufRx  rx_b;
+        static BufNfa nfa_b;
+        int ntrans = dfa.nstates * dfa.nclass;
+        if (buf_rx_read_file(&rx_b, path) == 0 &&
+            buf_nfa_build(&nfa_b, &rx_b) == 0 &&
+            buf_dfa_build_ex(&dfa2, &nfa_b, &rx_b, 1) == 0) {
+            CHECK(dfa2.nstates == dfa.nstates && dfa2.start == dfa.start,
+                  "minimised build is deterministic (nstates / start)");
+            for (i = 0; i < ntrans; i++) if (dfa2.next[i] != dfa.next[i]) break;
+            CHECK(i == ntrans, "minimised next[] is byte-identical across builds");
+            for (i = 0; i < dfa.nstates; i++)
+                if (dfa2.accept[i] != dfa.accept[i]) break;
+            CHECK(i == dfa.nstates, "minimised accept[] is byte-identical across builds");
+        }
+    }
+}
+
+static void test_minimize(void)
+{
+    min_pair("examples/calc.l",  "1 + 2.5 * foo\n(a )# c\nbar");
+    min_pair("examples/clike.l", "if (x->y) { return 42; } /* c */ // z\niffy");
+    min_pair("examples/big.l",
+             "int x = 0xFF; float y = 3.14e2;\n"
+             "if (x >= y) x <<= 1; // done\nreturn \"hi\";\n");
+
+    /* a spec with provably redundant states: `abd` and `acd` share a tail --
+     * the post-`ab` and post-`ac` states are non-accepting, both step to the
+     * lone accept state on `d` and nowhere else, so they merge. */
+    if (build_string("%tokens A\nA abd|acd\n") == 0) {
+        int pre;
+        if (buf_nfa_build(&nfa, &rx) == 0 &&
+            buf_dfa_build_ex(&dfa_um, &nfa, &rx, 0) == 0 &&
+            buf_dfa_build_ex(&dfa,    &nfa, &rx, 1) == 0) {
+            int k[8], l[8], n;
+            pre = dfa_um.nstates;
+            CHECK(pre == 6, "abd|acd is 6 states unminimised");
+            CHECK(dfa.nstates == 4, "abd|acd minimises to 4 states (tail merged)");
+            n = run_lex_on(&dfa, "abd", 3, k, l, 8);
+            CHECK(n == 1 && k[0] == BUF_TOK_FIRST_USER && l[0] == 3,
+                  "minimised abd|acd still matches 'abd'");
+            n = run_lex_on(&dfa, "acd", 3, k, l, 8);
+            CHECK(n == 1 && k[0] == BUF_TOK_FIRST_USER && l[0] == 3,
+                  "minimised abd|acd still matches 'acd'");
+        }
+    }
+}
+
 /* Native per-phase timing -- printed, never asserted (a slow machine must not
  * fail the suite). This is the M3 control for the comptime bench
  * (tests/bench.sh): if the native shape scales the same way the comptime VM's
@@ -259,7 +346,7 @@ static void time_phases(const char *path)
     const int     iters = 200;
     int           i;
     clock_t       t0;
-    double        rd, nf, df;
+    double        rd, nf, df, dm;
 
     if (buf_rx_read_file(&trx, path) != 0) { printf("  (skip %s)\n", path); return; }
 
@@ -272,11 +359,15 @@ static void time_phases(const char *path)
     nf = (double)(clock() - t0) / CLOCKS_PER_SEC / iters * 1e3;
 
     t0 = clock();
-    for (i = 0; i < iters; i++) buf_dfa_build(&tdfa, &tnfa, &trx);
+    for (i = 0; i < iters; i++) buf_dfa_build_ex(&tdfa, &tnfa, &trx, 0);
     df = (double)(clock() - t0) / CLOCKS_PER_SEC / iters * 1e3;
 
-    printf("  %-18s read %7.3f ms   nfa %7.3f ms   dfa %7.3f ms\n",
-           path, rd, nf, df);
+    t0 = clock();
+    for (i = 0; i < iters; i++) buf_dfa_build_ex(&tdfa, &tnfa, &trx, 1);
+    dm = (double)(clock() - t0) / CLOCKS_PER_SEC / iters * 1e3;
+
+    printf("  %-18s read %7.3f ms   nfa %7.3f ms   dfa %7.3f ms   dfa+min %7.3f ms\n",
+           path, rd, nf, df, dm);
 }
 
 int main(void)
@@ -287,6 +378,7 @@ int main(void)
     test_epsilon_cycle_dfa();
     test_clike();
     test_determinism();
+    test_minimize();
 
     printf("%s: %d checks, %d failures\n",
            failures ? "FAIL" : "ok  ", checks, failures);

@@ -14,7 +14,15 @@
 # the arena peaks (BUF_STATS) and the generated-file size for the full run.
 # Differencing adjacent rungs gives the per-phase cost.
 #
-#   make bench                 # both reference specs
+# A spec that carries a %grammar section additionally gets a parser-mode
+# sweep -- rungs 5..7 with -D BUF_EMIT_PARSER (5 +emit, 6 +grammar build,
+# 7 +parser-table emit). Every run in that sweep passes the flag, so the
+# only thing changing row to row is which parser phase executes: the 5->6
+# delta is the LALR(1) build, 6->7 the parser-table emit. Rung 5 there also
+# shows the cost of pulling buf_grammar.c into the comptime TU at all --
+# compare its median to plain rung 5 above.
+#
+#   make bench                 # calc.bflo, clike.bflo, expr.bflo
 #   REPS=9 tests/bench.sh      # more reps
 #   tests/bench.sh path/to/spec.bflo ...
 #
@@ -39,7 +47,7 @@ fi
 
 mkdir -p "$here/build"
 
-SPECS=${*:-"$here/examples/calc.bflo $here/examples/clike.bflo"}
+SPECS=${*:-"$here/examples/calc.bflo $here/examples/clike.bflo $here/examples/expr.bflo"}
 
 BENCH_T="$here/build/.bench_t"
 export BENCH_T
@@ -104,10 +112,37 @@ for spec in $SPECS; do
     dpm=$(awk -v a="$mm" -v b="$dfa_m" 'BEGIN{printf "%+.3f", a-b}')
     printf '  %-14s %8s %10s %10s\n' "4 +DFA+min" "$mm" "" "$dpm"
 
-    # Arena peaks + generated-file size for the full pipeline.
+    # Parser-mode sweep, for a spec with a %grammar section: rungs 5..7 all
+    # with -D BUF_EMIT_PARSER. d(phase) at rung 6 is the LALR(1) build, at
+    # rung 7 the parser-table emit.
+    grammar=$(grep -c '^%grammar' "$spec" 2>/dev/null || true)
+    if [ "${grammar:-0}" -gt 0 ]; then
+        echo
+        printf '  -- parser mode (-D BUF_EMIT_PARSER) --\n'
+        pprev=""
+        for n in 5 6 7; do
+            plabel=$(awk -v n="$n" 'BEGIN{
+                split("+emit[P] +grammar +parser-emit", L, " ");
+                print L[n-4]}')
+            pm=$(median_of "$spec" "$n" "-D BUF_EMIT_PARSER") || exit 1
+            pdp=$(awk -v a="$pm" -v b="$pprev" 'BEGIN{if(b=="")print "-";else printf "%+.3f", a-b}')
+            printf '  %-14s %8s %10s %10s\n' "$n $plabel" "$pm" "" "$pdp"
+            pprev=$pm
+        done
+    fi
+
+    # Arena peaks + generated-file size for the full pipeline. A %grammar spec
+    # runs the parser pipeline (BUF_STOP_AFTER=7 + BUF_EMIT_PARSER) so the
+    # LALR arena peaks and the .parse.gen.c size show up too.
     echo
+    if [ "${grammar:-0}" -gt 0 ]; then
+        stats_stop=7; stats_extra="-D BUF_EMIT_PARSER"
+    else
+        stats_stop=5; stats_extra=""
+    fi
+    # shellcheck disable=SC2086
     "$CCCC" -c=generated "$SRC" -Iinclude/buffalo -Isrc -Iruntime \
-        -D "BUF_SPEC=\"$spec\"" -D BUF_STOP_AFTER=5 -D BUF_STATS \
-        -o "$OUT" 2>&1 >/dev/null | sed 's/^/  /' || true
+        -D "BUF_SPEC=\"$spec\"" -D "BUF_STOP_AFTER=$stats_stop" -D BUF_STATS \
+        $stats_extra -o "$OUT" 2>&1 >/dev/null | sed 's/^/  /' || true
     printf '  gen.c size    %8d bytes\n\n' "$(wc -c < "$OUT")"
 done

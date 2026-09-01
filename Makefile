@@ -212,8 +212,9 @@ native: $(EXAMPLES:%=build/%_native) $(EXAMPLES:%=build/%_gen) build/digits \
 	    || { echo "FAIL three-way parity"; exit 1; }
 
 # Per-phase comptime cost of the pipeline (the BUF_STOP_AFTER ablation ladder
-# in src/buf_comptime.c). Needs cccc + perl. Not part of `check` -- it is
-# slow. See docs/performance.md.
+# in src/buf_comptime.c): lexer rungs 0-5 for every spec, plus a parser-mode
+# sweep (rungs 5-7, -D BUF_EMIT_PARSER) for a spec with a %grammar section.
+# Needs cccc + perl. Not part of `check` -- it is slow. See docs/performance.md.
 bench:
 	@tests/bench.sh
 

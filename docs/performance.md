@@ -55,11 +55,10 @@ Only `calc.bflo` and `clike.bflo` run through the comptime VM in `make check` (t
 | 7 | + parser-table emit (default for `buffalo parse`) — only under `-D BUF_EMIT_PARSER` |
 
 Rungs 6-7 are no-ops unless `-D BUF_EMIT_PARSER` is also set (what `buffalo
-parse` passes); `tests/bench.sh` measures the lexer-only 0-5 ladder and is
-unaffected by them. On the reference `expr.bflo` the grammar build adds
-roughly the same wall time as the DFA phase again (a small grammar doubles
-the ~0.5 s comptime cost); a dedicated parser-mode sweep to rung 7 is the
-next measurement to add here.
+parse` passes). `tests/bench.sh`'s main 0-5 ladder is lexer-only and
+unchanged; a spec that carries a `%grammar` section additionally gets a
+parser-mode sweep (rungs 5-7, every run with `-D BUF_EMIT_PARSER`) — see
+[the parser mode](#parser-mode) below.
 
 `-D BUF_STATS` prints arena peaks to stderr after the DFA build (plus the
 LALR automaton size when `-D BUF_EMIT_PARSER` is set);
@@ -70,7 +69,7 @@ ladder for each spec, N reps, and reports the median wall time and the
 per-phase delta, plus a `4 +DFA+min` row for the minimisation cost:
 
 ```sh
-make bench                     # calc.bflo + clike.bflo
+make bench                     # calc.bflo, clike.bflo, expr.bflo
 REPS=9 tests/bench.sh           # more reps
 tests/bench.sh examples/big.bflo   # the stress spec (slow)
 ```
@@ -168,6 +167,45 @@ that want the smaller table and can spend the compile time; `tests/bench.sh`
 reports its added cost as the `4 +DFA+min` row. Cutting `big.bflo`'s 2.25 s for
 real means the `buf_dfa_partition` sweep, not minimisation.
 
+## Parser mode
+
+<a id="parser-mode"></a>`buffalo parse` runs the lexer pipeline **and** builds
+LALR(1) parser tables from the spec's `%grammar` section (`buf_grammar.h`),
+then emits four more tables plus a `buf_parse_tree` wrapper. `tests/bench.sh`
+adds a parser-mode sweep for any spec with a `%grammar` section: rungs 5-7,
+every run with `-D BUF_EMIT_PARSER`, so the only thing changing row to row is
+which parser phase runs.
+
+7-rep medians, aarch64-darwin, cccc 0.1.0. The lexer-only rung 5 is the
+plain `+emit` row above; `5 +emit[P]` is the same rung with
+`-D BUF_EMIT_PARSER` — identical work, but `buf_grammar.c` is now in the
+comptime translation unit:
+
+| phase | `calc.bflo` (14 LR states) | `expr.bflo` (16 LR states) |
+|---|---|---|
+| rung 5 `+emit` (lexer only) | 0.523 s | 0.517 s |
+| rung 5 `+emit[P]` — grammar module in the TU, not run | 0.685 s | 0.680 s |
+| rung 6 `+grammar` — the LALR(1) build (`d(phase)`) | **+0.330 s** | **+0.344 s** |
+| rung 7 `+parser-emit` (`d(phase)`) | +0.005 s | ~0 |
+
+Three things fall out:
+
+1. **Pulling `buf_grammar.c` into the comptime TU costs ~0.16 s flat**, before
+   `buf_grammar_build` is even called — `#include @comptime` compiles the
+   ~700-line module into the comptime program every parse run. This is why
+   `buffalo lex` keeps it out behind `#ifdef BUF_EMIT_PARSER`.
+2. **The LALR(1) build itself is ~0.33 s** for these grammars. Both fixtures
+   are ~15 LR(0) states (three precedence tiers, 8 productions), so this is a
+   floor, not a scaling data point — the build mirrors `buf_dfa.h`'s
+   closure/goto structure and should scale the same superlinear way in state
+   count under the VM's ~1000× multiplier. A larger multi-tier grammar is the
+   measurement still to take.
+3. **Parser-table emit is free**, same as the lexer emit — raw
+   `GlobalVarSetInitData` blobs plus one `Quote()`d wrapper.
+
+Net: `buffalo parse` on a small grammar adds **~0.5 s** over `buffalo lex` —
+roughly half the extra translation unit, half the LALR build.
+
 ### Arena peaks
 
 | arena | cap | `clike.bflo` | `big.bflo` |
@@ -180,10 +218,12 @@ real means the `buf_dfa_partition` sweep, not minimisation.
 | transition table (`nstates·nclass`) | 262144 | 3655 | 24624 |
 | state-set pool | 65536 | 477 | 2157 |
 
-The `%grammar` section's arenas (`BUF_RX_MAX_NONTERMS` 128, `BUF_RX_MAX_PRODS`
-512, `BUF_RX_MAX_SYMS` 2048) are not in the table above: neither `clike.bflo`
-nor `big.bflo` has a grammar section, so there is no measured peak yet, and
-the section is inert for lexer cost — it does not touch `buf_nfa.h`/`buf_dfa.h`.
+The `%grammar` section's arenas are not in the table above — `clike.bflo` and
+`big.bflo` have no grammar section, and it is inert for lexer cost. Under
+`buffalo parse` the reference grammars sit at tiny fractions of their caps —
+`expr.bflo` reports `lalr states 16 / 512`, `lalr items 56 / 8192`,
+`lalr edges 48 / 32768` (from `-D BUF_STATS`, which now also prints the LALR
+automaton peaks when `-D BUF_EMIT_PARSER` is set).
 
 `big.bflo` at 103 rules first exposed `BUF_RX_MAX_RULES` at its old value of 128;
 it is now 256, matching `BUF_RX_MAX_TOKENS` (every `%tokens` entry needs a
@@ -200,6 +240,8 @@ caps, so shrinking one saves comptime-host `.bss` and nothing else. Note
 | `calc.bflo` | 13 × 11 | 2.2 KB |
 | `clike.bflo` | 85 × 43 | 16.8 KB |
 | `big.bflo` | 324 × 76 | 100 KB |
+| `expr.bflo` (`buffalo parse`) | 9 × 9 + 16 LR states | 3.7 KB |
+| `calc.bflo` (`buffalo parse`) | 13 × 11 + 14 LR states | 3.7 KB |
 
 cccc serialises each raw init blob as a C string literal (`"\000\001\002…"`),
 so the source text runs ~2× the raw table bytes. `clike.bflo`'s tables are

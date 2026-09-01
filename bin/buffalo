@@ -17,11 +17,11 @@ set -eu
 CCCC="${CCCC:-cccc}"
 here=$(cd "$(dirname "$0")/.." && pwd)
 COMPTIME_SRC="$here/src/buf_comptime.c"
-# The pure-C comptime modules. buf_comptime.c pulls their .c bodies in with
-# `#include @comptime "buf_*.c"`, so they only need to be on the include path
-# (-Isrc below), not the cccc argument list. Compile-time only -- never
-# linked into a generated program.
-COMPTIME_MODULES="$here/src/buf_rx.c $here/src/buf_tokcheck.c \
+# buf_comptime.c pulls these in with `#include @comptime "buf_*.c"`, so they
+# ride the include path (-Isrc below), not the cccc argument list. Checked
+# for existence here only so a missing file gets a buffalo-branded error
+# rather than a bare cccc "file not found" from inside the include.
+COMPTIME_INCLUDED="$here/src/buf_rx.c $here/src/buf_tokcheck.c \
 $here/src/buf_nfa.c $here/src/buf_dfa.c"
 
 usage() {
@@ -67,7 +67,7 @@ cmd_lex() {
         echo "buffalo lex: $COMPTIME_SRC does not exist." >&2
         exit 3
     fi
-    for m in $COMPTIME_MODULES; do
+    for m in $COMPTIME_INCLUDED; do
         [ -f "$m" ] || { echo "buffalo lex: missing module $m" >&2; exit 3; }
     done
 

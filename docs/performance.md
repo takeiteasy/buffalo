@@ -199,7 +199,7 @@ need at this size — the 43-class alphabet collapse is doing its job.
 as expected — a 300-state generated lexer is a ~100 KB file, most of it the
 `next` table.
 
-Emitted-table *correctness* (blob byte order, the `char` class table) is
-pinned by `make native`'s three-way diff — hand-written `build/digits` ==
-generated == one-shot native — the only end-to-end check of cccc's
-string-literal blob round-trip.
+Emitted-table *correctness* (blob byte order, the `unsigned char` class
+table) is pinned by `make native`'s three-way diff — hand-written
+`build/digits` == generated == one-shot native — the only end-to-end check
+of cccc's string-literal blob round-trip.

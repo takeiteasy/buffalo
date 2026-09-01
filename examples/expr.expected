@@ -1,0 +1,6 @@
+1+2*3  =>  (expr (expr (term (factor 1))) + (term (term (factor 2)) * (factor 3)))
+(1 + 2) * 3  =>  (expr (term (term (factor ( (expr (expr (term (factor 1))) + (term (factor 2))) ))) * (factor 3)))
+10 - 4 - 3  =>  (expr (expr (expr (term (factor 10))) - (term (factor 4))) - (term (factor 3)))
+2 * (3 + 4) / 5  =>  (expr (term (term (term (factor 2)) * (factor ( (expr (expr (term (factor 3))) + (term (factor 4))) ))) / (factor 5)))
+1 +  =>  error: syntax at EOF "" 1:4 [state 7]
+2 @ 3  =>  error: syntax at ERROR "@" 1:3 [state 1]

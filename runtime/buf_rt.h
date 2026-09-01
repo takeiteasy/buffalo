@@ -196,6 +196,17 @@ int buf_parse(BufParser *ps, BufLexer *lx,
              int nnonterm,
              int start_state);
 
+/*
+ * Parser-side counterpart to buf_next: a one-line wrapper that buf_emit.h
+ * emits into a `buffalo parse` .gen.c, forwarding to buf_parse with this
+ * spec's baked DFA + LALR(1) tables and scalars. Named by a Quote() template,
+ * so the generated file must reach this header via `#include @shared` for the
+ * same reason buf_next does. Returns the CST root's index into ps->nodes, or
+ * -1 (ps->status says why). The caller still owns and sizes the node/child/
+ * stack arrays and calls buf_parser_init first, exactly as for buf_parse.
+ */
+int buf_parse_tree(BufParser *ps, BufLexer *lx);
+
 #ifdef __cplusplus
 }
 #endif

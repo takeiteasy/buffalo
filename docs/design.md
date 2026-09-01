@@ -78,15 +78,18 @@ cccc's identifier resolver unless that extern arrived via `@shared`.
   [performance.md](performance.md).
 - `buf_grammar.{h,c}` — LALR(1) parser tables over the `%grammar` section's
   productions. See [The `.bflo` grammar section](#the-bflo-grammar-section)
-  and [LALR(1) table construction](#lalr1-table-construction) below.
-  Host-test-only for now (`tests/t_grammar.c`) — not yet wired into
-  `src/buf_comptime.c`'s comptime pipeline (follow-on work, see the tracker).
+  and [LALR(1) table construction](#lalr1-table-construction) below. Built by
+  `tests/t_grammar.c` under a plain `cc`, and `#include @comptime`'d into
+  `src/buf_comptime.c` under `buffalo parse` / `-D BUF_EMIT_PARSER` (kept out
+  of a plain `buffalo lex` run, which does not need it).
 - `buf_emit.h` — DFA → four file-scope `static const` tables (raw
-  `GlobalVarSetInitData` blobs) + the `buf_next` wrapper fn. Header-only and
-  unlike the other modules never split into a `.c`: it uses cccc's reflection
-  builtins, is pulled straight into `src/buf_comptime.c` with `#include
-  @comptime`, and is never compiled by a plain `cc`. Its output builds with a stock `cc` against
-  `runtime/buf_rt.c` and an example `_main.c`.
+  `GlobalVarSetInitData` blobs) + the `buf_next` wrapper fn; under `-D
+  BUF_EMIT_PARSER` also the four LALR(1) tables + the `buf_parse_tree`
+  wrapper. Header-only and unlike the other modules never split into a `.c`:
+  it uses cccc's reflection builtins, is pulled straight into
+  `src/buf_comptime.c` with `#include @comptime`, and is never compiled by a
+  plain `cc`. Its output builds with a stock `cc` against `runtime/buf_rt.c`
+  and an example `_main.c`.
 
 ### Runtime module
 
@@ -120,6 +123,25 @@ parity check) and the one build path that needs no cccc at all. The emitter
 matches its `static const` and its `unsigned char` class-table element type
 (emitted as the `BufClass` typedef — see the class-table note below).
 
+`bin/buffalo parse expr.bflo` (which adds `-D BUF_EMIT_PARSER -D
+BUF_STOP_AFTER=7`) writes a `.parse.gen.c` with everything above **plus** the
+LALR(1) tables and a second wrapper:
+
+```c
+static const int buf_lalr_action[NSTATES * NTOK];      /* BUF_LALR_ACT_*-packed */
+static const int buf_lalr_goto[NSTATES * NNONTERM];    /* state id, -1 = none */
+static const int buf_lalr_prod_lhs[NPRODS];            /* prod -> nonterminal index */
+static const int buf_lalr_prod_len[NPRODS];            /* prod -> RHS length */
+
+int buf_parse_tree(BufParser *ps, BufLexer *lx) {
+    return buf_parse(ps, lx, buf_dfa_class, buf_dfa_next, buf_dfa_accept,
+                     buf_rule_token, NSTATES, NCLASS, 0,
+                     buf_lalr_action, buf_lalr_goto,
+                     buf_lalr_prod_lhs, buf_lalr_prod_len,
+                     NTOK, NNONTERM, START_STATE);
+}
+```
+
 ### How the tables are emitted
 
 Each table is one `GlobalVar(name, MakeArray(elem_ty, len))` +
@@ -140,6 +162,16 @@ alone is not visible to a same-parse-point `Quote()`).
 
 Every table element type is wrapped in `MakeConst(...)`, so the tables emit
 `static const` — matching `digits_tables.c`.
+
+**The parser tables (`buf_emit_parser_tables`)** use the identical mechanism,
+one `MakeConst(GetType("int"))` blob per table. `action`/`goto_tab` are
+already contiguous live prefixes in `BufGrammar` (stride `g->ntok` /
+`g->nnonterm`, never the arena max), so each is one `memcpy`.
+`prod_lhs`/`prod_len` are not `BufGrammar` fields — the emitter bakes them
+into file-scope scratch arrays from `buf_lalr_plhs`/`buf_lalr_plen` over
+`0..rx->prod_count-1` (the synthetic augmenting production is never emitted).
+It runs *after* the DFA emitter so the `buf_parse_tree` `Quote()` template can
+name `buf_dfa_class` … `buf_rule_token`, which that pass published.
 
 **Class table element type is `BufClass`** — `typedef unsigned char
 BufClass;` in `buf_rt.h`. The emitter names it with `GetType("BufClass")`;
@@ -269,17 +301,19 @@ silently change the recognised language. See
 [bflo-format.md](bflo-format.md#grammar-section) for the full syntax.
 
 `buf_rx.h` reads and validates the grammar section; `buf_grammar.h` (below)
-builds LALR(1) parser tables from it; `buf_parse` (below) drives those
-tables at runtime. A worked example and comptime-pipeline wiring for
-`buf_grammar.h` remain follow-on work (see the tracker).
+builds LALR(1) parser tables from it; `buf_parse` (below) drives those tables
+at runtime. `buffalo parse` wires all three into the comptime pipeline and
+`examples/expr.bflo` is the worked lexer + grammar, with generated/native
+parity checked the same way as the lexer examples.
 
 ## LALR(1) table construction
 
 `buf_grammar.{h,c}` turns a validated `%grammar` section into LALR(1)
 `action`/`goto` tables — the parser-side counterpart to `buf_nfa`/`buf_dfa`
 on the lexer side, and built the same way: `.h`/`.c` pair, fixed arenas, no
-malloc, dual-compiled (host `cc` for `tests/t_grammar.c`; not yet wired into
-the comptime pipeline — see [Comptime modules](#comptime-modules) above).
+malloc, dual-compiled (host `cc` for `tests/t_grammar.c`; `#include @comptime`
+under `buffalo parse` / `-D BUF_EMIT_PARSER` — see [Comptime
+modules](#comptime-modules) above).
 
 **The augmented grammar.** A synthetic production `S' -> %start` drives the
 closure over the whole automaton and the accept action. It is never written
@@ -310,8 +344,8 @@ reason `buf_dfa.h` needs it.
 error, positive `shift to (value-1)`, `BUF_LALR_ACT_ACCEPT` a dedicated
 sentinel, any other negative `reduce production -(value)-1`. `tok` is the
 *runtime* `TOK_*` value (matching `buf_dfa.h`'s `rule_token[]` convention),
-so a future driver indexes the table directly off what `buf_run` hands it.
-`goto_tab[state*nnonterm+nt]` is a plain state id, or `-1`.
+so `buf_parse` indexes the table directly off what `buf_run` hands it — no
+remap layer. `goto_tab[state*nnonterm+nt]` is a plain state id, or `-1`.
 
 **Conflicts are always a hard error** — shift/reduce or reduce/reduce,
 first-wins, naming the state, the conflicting lookahead token, and the
@@ -326,7 +360,10 @@ cell it reads is unambiguous by construction.
 
 `buf_parse(ps, lx, ...)` is the generic LALR(1) shift/reduce driver, the
 parser-side counterpart to `buf_run`: hand-written in `buf_rt.c`, never
-emitted, driving `buf_run` itself for each lookahead token.
+emitted, driving `buf_run` itself for each lookahead token. The generated
+`.parse.gen.c` calls it through the one-line `buf_parse_tree(ps, lx)` wrapper
+`buf_emit.h` emits — the parser-side analogue of `buf_next`, with this spec's
+DFA and LALR tables and scalars baked into the call.
 
 - Parallel `state_stack`/`node_stack` arrays (caller-provided, like
   `BufLexer`'s stack-allocated storage — no allocation inside `buf_rt.c`);
@@ -352,11 +389,12 @@ emitted, driving `buf_run` itself for each lookahead token.
 **Why `buf_parse` cannot take a `BufRx *`.** `BufRx` is a comptime-only,
 megabyte-scale fixed-arena struct, not a runtime type — `buf_rt.c` never
 links against it. So instead of calling `buf_lalr_plhs`/`buf_lalr_plen`
-directly, `buf_parse` takes two flat arrays the caller bakes from those
-accessors ahead of time: `prod_lhs[nprods]` and `prod_len[nprods]`, the
-runtime-side counterpart to `buf_dfa.h`'s `rule_token[]`. `buf_lalr_psym`
-isn't needed by the driver at all — a reduce's popped stack entries already
-*are* its children.
+directly, `buf_parse` takes two flat arrays baked from those accessors ahead
+of time: `prod_lhs[nprods]` and `prod_len[nprods]`, the runtime-side
+counterpart to `buf_dfa.h`'s `rule_token[]`. In the generated path
+`buf_emit_parser_tables` bakes them; `tests/t_parse.c` does the same by hand.
+`buf_lalr_psym` isn't needed by the driver at all — a reduce's popped stack
+entries already *are* its children.
 
 **`action[]` is `int`, not `short`.** Unlike `buf_run`'s DFA tables,
 `BufGrammar.action` must be `int` because `BUF_LALR_ACT_ACCEPT ==
@@ -410,9 +448,9 @@ non-trivial automaton got built, not that it recognised anything.
   `memcpy` of the comptime host's integers. Fine while comptime host and target
   are the same machine (the cccc norm); a cross-arch `.gen.c` would need
   byte-swapping. Revisit if it ever bites.
-- **`buf_next` is a fixed global name**, so one generated lexer per program. A
-  program that needs two lexers needs a name-parameterised emitter — not
-  currently planned.
+- **`buf_next` / `buf_parse_tree` are fixed global names**, so one generated
+  lexer (and one parser) per program. Supporting two would need a
+  name-parameterised emitter — not currently planned.
 - **Bytes only, no Unicode.** Input is bytes; UTF-8 is the caller's problem
   (multibyte sequences pass through inside identifiers/strings as raw bytes).
 - **DFA minimisation is opt-in and rarely worth it.** Alphabet equivalence

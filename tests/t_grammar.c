@@ -107,6 +107,16 @@ static void test_calc_structure(void) {
     }
 }
 
+/* The checked-in lex+parse example. Guards against a conflict regression in
+ * examples/expr.bflo's grammar, which `make generated`/`native` also lower. */
+static void test_expr_example(void) {
+    if (build("examples/expr.bflo") != 0) return;
+
+    CHECK(g.has_error == 0, "expr.bflo grammar builds without a conflict");
+    CHECK(rx.prod_count == 8, "expr.bflo has 8 productions (3 + 3 + 2)");
+    CHECK(g.nstates == 16, "expr.bflo LALR(1) automaton has 16 states");
+}
+
 static void test_calc_spot_checks(void) {
     int tINT, tFLOAT, tIDENT, tPLUS, tSTAR, tLPAREN, tRPAREN;
     int ntExpr, ntTerm, ntFactor;
@@ -326,6 +336,7 @@ static void test_unreachable(void) {
 
 int main(void) {
     test_calc_structure();
+    test_expr_example();
     test_calc_spot_checks();
     test_calc_reference_driver();
     test_determinism();

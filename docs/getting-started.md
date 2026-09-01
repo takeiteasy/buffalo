@@ -52,7 +52,26 @@ The generated file builds with a stock `cc` against `runtime/buf_rt.c` and an
 example `_main.c` — no cccc past this point. Running the pipeline at compile
 time costs ~0.38 s for a ~45-rule lexer, measured in
 [performance.md](performance.md); `-D BUF_STOP_AFTER=n` stops it early (`0`
-none … `5` emit) for per-phase timing.
+none … `5` emit, `6` grammar, `7` parser emit) for per-phase timing.
+
+### `buffalo parse`
+
+`bin/buffalo parse` runs the same pipeline with `-D BUF_EMIT_PARSER`: after the
+DFA tables it also builds LALR(1) parser tables from the spec's `%grammar`
+section and emits four more `static const int` tables plus a `buf_parse_tree`
+wrapper. The spec must carry a `%grammar` section — `buffalo parse` on one
+without it is an error.
+
+```sh
+$ bin/buffalo parse examples/expr.bflo
+Generated C written to examples/expr.bflo.parse.gen.c
+```
+
+The generated file links against `runtime/buf_rt.c` exactly as the `lex`
+output does; `buf_parse_tree(&ps, &lx)` then drives
+[`buf_parse`](design.md#the-parser-driver-buf_parse) over the baked tables
+into a concrete syntax tree. `examples/expr_main.c` is a worked driver —
+`echo '1 + 2 * 3' | build/expr_pgen` prints the parenthesised parse tree.
 
 What you also get is a spec reader and DFA builder that fail loudly and
 precisely. A malformed regex is reported at its `line:col` in the `.bflo` file:
@@ -90,15 +109,18 @@ extra kind, reordering, or explicit value on a non-reserved kind is an error.
 ```sh
 $ bin/buffalo help
 $ bin/buffalo version
-$ bin/buffalo lex examples/calc.bflo [-o OUT.gen.c] [--tokens TOK.h]
+$ bin/buffalo lex   examples/calc.bflo [-o OUT.gen.c] [--tokens TOK.h]
+$ bin/buffalo parse examples/expr.bflo [-o OUT.parse.gen.c] [--tokens TOK.h]
 ```
 
 ## The two build paths
 
 There are two ways to get from a `.bflo` spec to a program, and they must
 produce byte-identical output. `make generated` and `make native` run both
-over every example in the suite — `digits`, `calc`, `clike`, `json`;
-`make check` invokes them under a no-cccc skip gate.
+over every example in the suite — the lexer examples `digits`, `calc`,
+`clike`, `json` (`buffalo lex`), and the lex+parse example `expr` (`buffalo
+parse`, `_pgen` / `_pnative` build stems); `make check` invokes them under a
+no-cccc skip gate.
 
 ```sh
 make generated   # bin/buffalo lex -> .gen.c, then plain cc; golden diff per example

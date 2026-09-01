@@ -1,0 +1,38 @@
+# expr.bflo -- the reference lex+parse example: an arithmetic calculator
+# with a full %grammar section, lowered to DFA *and* LALR(1) parser tables
+# by `buffalo parse` and consumed at runtime by buf_parse_tree.
+#
+# Lines starting with '#' are comments. Blank lines are ignored.
+
+%tokens INT PLUS MINUS STAR SLASH LPAREN RPAREN
+
+INT       [0-9]+
+PLUS      "+"
+MINUS     "-"
+STAR      "*"
+SLASH     "/"
+LPAREN    "("
+RPAREN    ")"
+
+%skip     [ \t\r\n]+
+
+# Classic three-tier arithmetic grammar: PLUS/MINUS bind loosest, then
+# STAR/SLASH, then a primary (a parenthesised expr or an INT). Left-recursive
+# on purpose -- LALR(1) handles it directly, and the left recursion is what
+# makes the operators left-associative in the resulting tree.
+%grammar
+%start expr
+
+expr : expr PLUS term
+     | expr MINUS term
+     | term
+     ;
+
+term : term STAR factor
+     | term SLASH factor
+     | factor
+     ;
+
+factor : LPAREN expr RPAREN
+       | INT
+       ;

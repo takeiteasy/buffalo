@@ -3,10 +3,10 @@
  * %grammar section read by buf_rx.h.
  *
  * Pure C, .h/.c pair, fixed arenas, no malloc. Compiled by `cc` for the host
- * unit tests (tests/t_grammar.c); once a follow-on ticket wires it into the
- * pipeline it will also compile inside cccc's comptime VM, the same way the
- * other modules do (`#include @comptime "buf_grammar.c"`). Sticky
- * first-wins error string, never MacroErrorAt (see buf_rx.h).
+ * unit tests (tests/t_grammar.c), and inside cccc's comptime VM via
+ * `#include @comptime "buf_grammar.c"` from src/buf_comptime.c under
+ * `buffalo parse` / -D BUF_EMIT_PARSER, the same way the other modules do.
+ * Sticky first-wins error string, never MacroErrorAt (see buf_rx.h).
  *
  * Input: a BufRx with a validated %grammar section (has_grammar, has_start,
  * nonterms[]/prods[]/syms[]). Output --

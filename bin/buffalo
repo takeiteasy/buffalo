@@ -6,7 +6,7 @@
 # This script just assembles that invocation.
 #
 #   buffalo lex   SPEC.bflo [-o OUT.gen.c] [--tokens TOK.h] [-- <extra cccc args>]
-#   buffalo parse SPEC.bflo ...              (Phase 2 -- not implemented)
+#   buffalo parse SPEC.bflo [-o OUT.parse.gen.c] [--tokens TOK.h] [-- <extra>]
 #   buffalo version
 #   buffalo help
 #
@@ -22,7 +22,7 @@ COMPTIME_SRC="$here/src/buf_comptime.c"
 # for existence here only so a missing file gets a buffalo-branded error
 # rather than a bare cccc "file not found" from inside the include.
 COMPTIME_INCLUDED="$here/src/buf_rx.c $here/src/buf_tokcheck.c \
-$here/src/buf_nfa.c $here/src/buf_dfa.c"
+$here/src/buf_nfa.c $here/src/buf_dfa.c $here/src/buf_grammar.c"
 
 usage() {
     cat <<'EOF'
@@ -36,9 +36,12 @@ commands:
         the default is SPEC with a trailing ".bflo" replaced by "_tokens.h"
         (examples/calc.bflo -> examples/calc_tokens.h).
 
-  parse SPEC.bflo ...
-        Parser generator, over the same .bflo file's %grammar section.
-        Phase 2 -- not implemented yet.
+  parse SPEC.bflo [-o OUT.parse.gen.c] [--tokens TOK.h] [-- <extra cccc args>]
+        Lower a lexer + %grammar spec to a portable C table file: the DFA
+        tables and buf_next wrapper `lex` emits, plus the LALR(1)
+        action/goto/prod tables and the buf_parse_tree wrapper.
+        Default output: SPEC.bflo.parse.gen.c
+        The spec must carry a %grammar section; --tokens works as for `lex`.
 
   version
   help
@@ -85,9 +88,42 @@ cmd_lex() {
 }
 
 cmd_parse() {
-    echo "buffalo parse: the parser generator is Phase 2 and is not implemented yet." >&2
-    echo "See ROADMAP.md." >&2
-    exit 3
+    [ $# -ge 1 ] || { echo "buffalo parse: missing SPEC.bflo" >&2; exit 2; }
+    spec=$1; shift
+    out="${spec}.parse.gen.c"
+    tokens=""
+    extra=""
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -o)       out=$2; shift 2 ;;
+            --tokens) tokens=$2; shift 2 ;;
+            --)       shift; extra="$*"; break ;;
+            *)        echo "buffalo parse: unexpected argument '$1'" >&2; exit 2 ;;
+        esac
+    done
+
+    if [ ! -f "$spec" ]; then
+        echo "buffalo parse: no such spec file: $spec" >&2; exit 2
+    fi
+    if [ ! -f "$COMPTIME_SRC" ]; then
+        echo "buffalo parse: $COMPTIME_SRC does not exist." >&2
+        exit 3
+    fi
+    for m in $COMPTIME_INCLUDED; do
+        [ -f "$m" ] || { echo "buffalo parse: missing module $m" >&2; exit 3; }
+    done
+
+    # -D BUF_EMIT_PARSER turns on the grammar build + parser-table emit;
+    # BUF_STOP_AFTER=7 runs the full ladder including those two rungs. Both
+    # are -D for the same reason as `lex` (a source #define is not forwarded
+    # into a comptime body); a trailing `-- -D ...` still overrides, last wins.
+    set -- -c=generated "$COMPTIME_SRC" -Iinclude/buffalo -Isrc -Iruntime \
+        -D "BUF_SPEC=\"$spec\"" -D BUF_EMIT_PARSER -D BUF_STOP_AFTER=7
+    [ -n "$tokens" ] && set -- "$@" -D "BUF_TOKENS_H=\"$tokens\""
+    set -- "$@" -o "$out"
+
+    # shellcheck disable=SC2086
+    exec "$CCCC" "$@" $extra
 }
 
 [ $# -ge 1 ] || { usage >&2; exit 2; }
@@ -95,7 +131,7 @@ sub=$1; shift
 case $sub in
     lex)             cmd_lex "$@" ;;
     parse)           cmd_parse "$@" ;;
-    version|--version) echo "buffalo 0.1.0 (M4 -- lexer generator)" ;;
+    version|--version) echo "buffalo 0.1.0 (lexer + LALR(1) parser generator)" ;;
     help|-h|--help)  usage ;;
     *)               echo "buffalo: unknown command '$sub'" >&2; usage >&2; exit 2 ;;
 esac

@@ -176,6 +176,44 @@ static void test_calc_reject(void) {
     CHECK(run_parse(&ps, "1 2") < 0 && ps.status == BUF_PARSE_ERR_SYNTAX, "'1 2' rejects");
 }
 
+/* --- the checked-in lex+parse example (examples/expr.bflo) --------------- */
+
+static void test_expr_example(void) {
+    BufParser ps;
+    int root;
+
+    if (build("examples/expr.bflo") != 0) return;
+
+    /* examples/expr_main.c hardcodes nt index -> name (it has no BufRx at
+     * runtime). Pin the reader's assignment so a production reorder that
+     * shifts the indices fails here, not silently in the demo's output. */
+    CHECK(rx.nonterm_count == 3
+          && strcmp(rx.nonterms[0].name, "expr")   == 0
+          && strcmp(rx.nonterms[1].name, "term")   == 0
+          && strcmp(rx.nonterms[2].name, "factor") == 0,
+          "expr.bflo nonterminals are indexed expr=0, term=1, factor=2");
+
+    root = run_parse(&ps, "1+2*3");
+    CHECK(root >= 0 && ps.status == BUF_PARSE_OK, "expr.bflo: '1+2*3' parses");
+    if (root >= 0)
+        CHECK(strcmp(sexpr(root),
+                     "(expr (expr (term (factor 1))) + (term (term (factor 2)) * (factor 3)))") == 0,
+              "expr.bflo: STAR binds tighter than PLUS");
+
+    root = run_parse(&ps, "10 - 4 - 3");
+    CHECK(root >= 0 && ps.status == BUF_PARSE_OK, "expr.bflo: '10 - 4 - 3' parses");
+    if (root >= 0)
+        CHECK(strcmp(sexpr(root),
+                     "(expr (expr (expr (term (factor 10))) - (term (factor 4))) - (term (factor 3)))") == 0,
+              "expr.bflo: MINUS is left-associative");
+
+    CHECK(run_parse(&ps, "1 +") < 0 && ps.status == BUF_PARSE_ERR_SYNTAX,
+          "expr.bflo: '1 +' rejects as ERR_SYNTAX");
+    CHECK(run_parse(&ps, "2 @ 3") < 0 && ps.status == BUF_PARSE_ERR_SYNTAX
+          && ps.error_tok.kind == BUF_TOK_ERROR,
+          "expr.bflo: a stray '@' surfaces as a BUF_TOK_ERROR lookahead");
+}
+
 /* --- epsilon production: nchild == 0, inherited line:col ----------------- */
 
 static void test_epsilon_production(void) {
@@ -224,6 +262,7 @@ static void test_node_pool_exhaustion(void) {
 int main(void) {
     test_calc_accept_shape();
     test_calc_reject();
+    test_expr_example();
     test_epsilon_production();
     test_node_pool_exhaustion();
 

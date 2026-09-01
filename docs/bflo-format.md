@@ -146,9 +146,11 @@ The reader accepts and validates a `%grammar` section: it resolves every
 symbol, checks that the grammar is well-formed, and reports `line:col`
 diagnostics in the same style as the lexer section. `buf_grammar.h` then
 builds LALR(1) parser tables (action/goto) from it — see
-[design.md](design.md#lalr1-table-construction). There is still no runtime
-parser driver consuming those tables: a `.bflo` file with a `%grammar`
-section lexes exactly as it would without one.
+[design.md](design.md#lalr1-table-construction) — and `buffalo parse` lowers
+those tables plus a `buf_parse_tree` wrapper into the generated C, where
+[`buf_parse`](design.md#the-parser-driver-buf_parse) drives them into a
+concrete syntax tree. `buffalo lex` ignores the `%grammar` section: a spec
+with one lexes exactly as it would without one.
 
 ### `%grammar`
 

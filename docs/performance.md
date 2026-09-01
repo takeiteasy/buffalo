@@ -50,9 +50,19 @@ Only `calc.bflo` and `clike.bflo` run through the comptime VM in `make check` (t
 | 2 | + token-header validation |
 | 3 | + NFA construction |
 | 4 | + DFA construction |
-| 5 | + emit (default) |
+| 5 | + emit (default for `buffalo lex`) |
+| 6 | + LALR(1) grammar build   — only under `-D BUF_EMIT_PARSER` |
+| 7 | + parser-table emit (default for `buffalo parse`) — only under `-D BUF_EMIT_PARSER` |
 
-`-D BUF_STATS` prints arena peaks to stderr after the DFA build;
+Rungs 6-7 are no-ops unless `-D BUF_EMIT_PARSER` is also set (what `buffalo
+parse` passes); `tests/bench.sh` measures the lexer-only 0-5 ladder and is
+unaffected by them. On the reference `expr.bflo` the grammar build adds
+roughly the same wall time as the DFA phase again (a small grammar doubles
+the ~0.5 s comptime cost); a dedicated parser-mode sweep to rung 7 is the
+next measurement to add here.
+
+`-D BUF_STATS` prints arena peaks to stderr after the DFA build (plus the
+LALR automaton size when `-D BUF_EMIT_PARSER` is set);
 `-D BUF_DFA_STATS` (in `buf_dfa.h`) adds closure-call and state-set-compare
 counters. `-D BUF_MINIMIZE` runs the opt-in Moore minimisation pass after
 subset construction (see "DFA minimisation" below). `tests/bench.sh` walks the

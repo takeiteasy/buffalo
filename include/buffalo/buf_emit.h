@@ -41,6 +41,9 @@
 #define BUF_EMIT_H
 
 #include "buf_dfa.h"
+#ifdef BUF_EMIT_PARSER
+#include "buf_grammar.h"
+#endif
 
 /* Emit the four tables + the buf_next wrapper for a built DFA. Returns 0.
  * `dfa` must have built cleanly (dfa->has_error == 0); the caller checks.
@@ -64,9 +67,9 @@ static int buf_emit_tables(BufDfa *dfa, BufRx *rx) {
     Obj  *v_cls, *v_next, *v_accept, *v_rtok, *fn;
     Node *lx;
 
-    /* rx is unused today: rule names, the %tokens header and TOK_* spellings
-     * are all baked into dfa->rule_token numerically. Kept as the hook for
-     * symbolic-name emission (M5) and the Phase 2 parser. */
+    /* rx is unused here: rule names, the %tokens header and TOK_* spellings
+     * are all baked into dfa->rule_token numerically. buf_emit_parser_tables
+     * below is the one that reads it (production shapes). */
     (void)rx;
 
     v_cls = GlobalVar("buf_dfa_class", MakeArray(class_ty, 256));
@@ -103,5 +106,83 @@ static int buf_emit_tables(BufDfa *dfa, BufRx *rx) {
     }
     return 0;
 }
+
+#ifdef BUF_EMIT_PARSER
+/* prod_lhs[] / prod_len[] are not fields of BufGrammar -- buf_parse takes them
+ * as flat `const int *` arrays baked by the caller from buf_lalr_plhs /
+ * buf_lalr_plen (buf_grammar.h says these accessors exist for exactly this).
+ * File-scope scratch so the bake-out is not a comptime-VM stack local; sized
+ * to the real production arena, indexed only over 0..rx->prod_count-1 (the
+ * synthetic S' -> %start augmenting production is never emitted). */
+static int buf_emit_prod_lhs[BUF_RX_MAX_PRODS];
+static int buf_emit_prod_len[BUF_RX_MAX_PRODS];
+
+/* Emit the LALR(1) parser tables + the buf_parse_tree wrapper. Returns 0.
+ * Runs AFTER buf_emit_tables -- the wrapper's Quote() template names the four
+ * DFA table symbols that call publishes (buf_dfa_class ... buf_rule_token).
+ * `dfa` supplies the DFA scalars the wrapper also forwards; `g` must have
+ * built cleanly (g->has_error == 0; the caller checks).
+ *
+ * Same conventions as buf_emit_tables: raw GlobalVarSetInitData blobs of each
+ * table's live prefix (g->action / g->goto_tab stride by g->ntok / g->nnonterm,
+ * never the arena max, so each is one contiguous memcpy), `static const int`
+ * element type, PublishNodeAt so a same-parse-point Quote() can name them. */
+static int buf_emit_parser_tables(BufDfa *dfa, BufGrammar *g, BufRx *rx) {
+    Type *int_ty  = MakeConst(GetType("int"));
+    int   in      = (int)sizeof(int);
+    int   naction = g->nstates * g->ntok;
+    int   ngoto   = g->nstates * g->nnonterm;
+    int   np      = rx->prod_count;
+    Obj  *v_action, *v_goto, *v_plhs, *v_plen, *fn;
+    Node *ps, *lx;
+    int   p;
+
+    for (p = 0; p < np; p++) {
+        buf_emit_prod_lhs[p] = buf_lalr_plhs(rx, p);
+        buf_emit_prod_len[p] = buf_lalr_plen(rx, p);
+    }
+
+    v_action = GlobalVar("buf_lalr_action", MakeArray(int_ty, naction));
+    GlobalVarSetInitData(v_action, g->action, naction * in);
+    GlobalVarSetStatic(v_action, 1);
+    PublishNodeAt(v_action, SyntheticToken("buf_lalr_action"));
+
+    v_goto = GlobalVar("buf_lalr_goto", MakeArray(int_ty, ngoto));
+    GlobalVarSetInitData(v_goto, g->goto_tab, ngoto * in);
+    GlobalVarSetStatic(v_goto, 1);
+    PublishNodeAt(v_goto, SyntheticToken("buf_lalr_goto"));
+
+    v_plhs = GlobalVar("buf_lalr_prod_lhs", MakeArray(int_ty, np));
+    GlobalVarSetInitData(v_plhs, buf_emit_prod_lhs, np * in);
+    GlobalVarSetStatic(v_plhs, 1);
+    PublishNodeAt(v_plhs, SyntheticToken("buf_lalr_prod_lhs"));
+
+    v_plen = GlobalVar("buf_lalr_prod_len", MakeArray(int_ty, np));
+    GlobalVarSetInitData(v_plen, buf_emit_prod_len, np * in);
+    GlobalVarSetStatic(v_plen, 1);
+    PublishNodeAt(v_plen, SyntheticToken("buf_lalr_prod_len"));
+
+    fn = MakeFunction("buf_parse_tree", GetType("int"));
+    FunctionAddParam(fn, "ps", MakePointer(GetType("BufParser")));
+    FunctionAddParam(fn, "lx", MakePointer(GetType("BufLexer")));
+    WithFn(fn) {
+        ps = MakeParamRef(fn, "ps");
+        lx = MakeParamRef(fn, "lx");
+        FunctionSetBody(fn, Quote(
+            "return buf_parse($1, $2, buf_dfa_class, buf_dfa_next, "
+            "buf_dfa_accept, buf_rule_token, $3, $4, $5, "
+            "buf_lalr_action, buf_lalr_goto, buf_lalr_prod_lhs, "
+            "buf_lalr_prod_len, $6, $7, $8);",
+            ps, lx,
+            MakeIntLiteral(dfa->nstates),
+            MakeIntLiteral(dfa->nclass),
+            MakeIntLiteral(dfa->start),
+            MakeIntLiteral(g->ntok),
+            MakeIntLiteral(g->nnonterm),
+            MakeIntLiteral(g->start_state)));
+    }
+    return 0;
+}
+#endif /* BUF_EMIT_PARSER */
 
 #endif /* BUF_EMIT_H */

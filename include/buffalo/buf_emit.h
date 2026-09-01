@@ -48,20 +48,16 @@
  * Plain `static` in an @comptime-routed header -- the same shape buf_dfa.h's
  * helpers use, so buf_comptime.c's [[cccc::comptime]] entry can call it. */
 static int buf_emit_tables(BufDfa *dfa, BufRx *rx) {
-    /* The class table is emitted as `char`, not `unsigned char`, for two
-     * independent reasons:
-     *   1. cccc's comptime GetType resolves only "char" / "short" / "int" --
-     *      "unsigned char" returns NULL.
-     *   2. A `typedef unsigned char BufClass;` in buf_rt.h does not help
-     *      either: cccc emits its forward-declaration block *before* the
-     *      `@shared` #include, so a name from that header is not in scope as
-     *      an emitted global's element type. (This also rules out
-     *      typedef-based name-parameterisation of the table symbols.)
-     * The table holds values 0..nclass-1 (<= ~40), so a `char` blob is
-     * bit-identical; the buf_next wrapper casts it to `const unsigned char *`
-     * for buf_run. MakeConst() gives each table the `static const`
-     * qualification the hand-written examples/digits_tables.c uses. */
-    Type *char_ty  = MakeConst(GetType("char"));
+    /* The class table emits as `BufClass` (`typedef unsigned char` in
+     * buf_rt.h), matching buf_run's `const unsigned char *cls` parameter and
+     * the hand-written examples/digits_tables.c. The typedef is reachable as
+     * an emitted global's element type because buf_rt.h arrives via `#include
+     * @shared` and the generated forward-declaration block now sits below
+     * that include. A bare GetType("unsigned char") still returns NULL (no
+     * multi-word base-type spelling in the comptime type resolver), so the
+     * table type must go through the typedef name. MakeConst() gives each
+     * table the `static const` qualification digits_tables.c uses. */
+    Type *class_ty = MakeConst(GetType("BufClass"));
     Type *short_ty = MakeConst(GetType("short"));
     int   ntrans   = dfa->nstates * dfa->nclass;
     int   sh       = (int)sizeof(short);
@@ -73,7 +69,7 @@ static int buf_emit_tables(BufDfa *dfa, BufRx *rx) {
      * symbolic-name emission (M5) and the Phase 2 parser. */
     (void)rx;
 
-    v_cls = GlobalVar("buf_dfa_class", MakeArray(char_ty, 256));
+    v_cls = GlobalVar("buf_dfa_class", MakeArray(class_ty, 256));
     GlobalVarSetInitData(v_cls, dfa->cls, 256);
     GlobalVarSetStatic(v_cls, 1);
     PublishNodeAt(v_cls, SyntheticToken("buf_dfa_class"));
@@ -98,7 +94,7 @@ static int buf_emit_tables(BufDfa *dfa, BufRx *rx) {
     WithFn(fn) {
         lx = MakeParamRef(fn, "lx");
         FunctionSetBody(fn, Quote(
-            "return buf_run($1, (const unsigned char *)buf_dfa_class, "
+            "return buf_run($1, buf_dfa_class, "
             "buf_dfa_next, buf_dfa_accept, buf_rule_token, $2, $3, $4);",
             lx,
             MakeIntLiteral(dfa->nstates),

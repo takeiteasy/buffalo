@@ -30,8 +30,9 @@
 #include "digits_tokens.h"
 
 /* byte -> equivalence class; total over 0..255, values in 0..NCLASS-1.
- * Zero-initialised entries are class 0 ("other"). */
-static const unsigned char buf_dfa_class[256] = {
+ * Zero-initialised entries are class 0 ("other"). BufClass is buf_rt.h's
+ * `typedef unsigned char` -- same element type the emitter generates. */
+static const BufClass buf_dfa_class[256] = {
     ['0'] = 1, ['1'] = 1, ['2'] = 1, ['3'] = 1, ['4'] = 1,
     ['5'] = 1, ['6'] = 1, ['7'] = 1, ['8'] = 1, ['9'] = 1,
     [' '] = 2, ['\t'] = 2, ['\r'] = 2, ['\n'] = 2,

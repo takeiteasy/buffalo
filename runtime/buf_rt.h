@@ -48,6 +48,15 @@ typedef struct BufLexer { /* concrete: the caller stack-allocates `BufLexer lx;`
     int         col;
 } BufLexer;
 
+/*
+ * Byte -> DFA equivalence class. The emitter names this type for the
+ * `buf_dfa_class` table it generates: `buf_rt.h` reaches the comptime pass
+ * via `#include @shared`, so `GetType("BufClass")` resolves there. A bare
+ * `GetType("unsigned char")` does not (the comptime type resolver has no
+ * spelling for a multi-word base type), hence the typedef.
+ */
+typedef unsigned char BufClass;
+
 void buf_lexer_init(BufLexer *lx, const char *src, int len);
 
 /*

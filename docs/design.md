@@ -40,8 +40,9 @@ cccc's identifier resolver unless that extern arrived via `@shared`.
   nullable *sub-expression* — `(a?)+`, `(a*)*` — survives `buf_rx.h` (only a
   nullable *rule* is rejected) and puts an ε cycle in the NFA, so every ε walk
   is worklist + visited-set, never recursive. Fragment entry/exit come back
-  through out-params, not a returned struct: cccc's comptime VM mishandles a
-  by-value struct return from a recursive comptime function.
+  through `int *` out-params: the fragment cases already name their endpoints
+  as plain locals, and threading them through pointers keeps the recursion
+  allocation-free.
 - `buf_dfa.h` — subset construction: ε-NFA → DFA over alphabet
   equivalence classes (not raw bytes). The alphabet partition starts with all
   256 bytes in one class and splits on each CLASS-leaf byte set, then
@@ -91,13 +92,13 @@ sharp edges around `while` / `break` / `continue` (see below).
 `.gen.c` containing four file-scope `static` tables and one wrapper:
 
 ```c
-static const char  buf_dfa_class[256];              /* byte -> class 0..NCLASS-1 */
-static const short buf_dfa_next[NSTATES * NCLASS];   /* flat; -1 = dead */
-static const short buf_dfa_accept[NSTATES];          /* rule index, -1 = non-accepting */
-static const short buf_rule_token[NRULES];           /* rule -> TOK_* kind, -1 for %skip */
+static const BufClass buf_dfa_class[256];             /* byte -> class 0..NCLASS-1 */
+static const short buf_dfa_next[NSTATES * NCLASS];    /* flat; -1 = dead */
+static const short buf_dfa_accept[NSTATES];           /* rule index, -1 = non-accepting */
+static const short buf_rule_token[NRULES];            /* rule -> TOK_* kind, -1 for %skip */
 
 BufToken buf_next(BufLexer *lx) {
-    return buf_run(lx, (const unsigned char *)buf_dfa_class, buf_dfa_next,
+    return buf_run(lx, buf_dfa_class, buf_dfa_next,
                    buf_dfa_accept, buf_rule_token, NSTATES, NCLASS, 0);
 }
 ```
@@ -105,8 +106,8 @@ BufToken buf_next(BufLexer *lx) {
 `examples/digits_tables.c` is a hand-written file of the same shape. It is
 the reference the emitter is diffed against (`make native`'s three-way
 parity check) and the one build path that needs no cccc at all. The emitter
-matches its `static const`; it does **not** match its `unsigned char` on the
-class table — see the class-table note below.
+matches its `static const` and its `unsigned char` class-table element type
+(emitted as the `BufClass` typedef — see the class-table note below).
 
 ### How the tables are emitted
 
@@ -129,15 +130,16 @@ alone is not visible to a same-parse-point `Quote()`).
 Every table element type is wrapped in `MakeConst(...)`, so the tables emit
 `static const` — matching `digits_tables.c`.
 
-**Class table is `char`, not `unsigned char`.** Two independent reasons:
-cccc's comptime `GetType` resolves only `"char"`, `"short"`, `"int"` — not
-`"unsigned char"` — and cccc emits its forward-declaration block *before* the
-`@shared` `#include`, so a `typedef unsigned char BufClass;` in `buf_rt.h`
-would not be in scope as an emitted global's element type either. (That
-second point also forecloses `typedef`-based name-parameterisation of the
-table symbols.) The class table holds values `0..nclass-1` (≤ ~40), so a
-plain `char` blob is bit-identical and the wrapper casts it back to `const
-unsigned char *` for `buf_run`.
+**Class table element type is `BufClass`** — `typedef unsigned char
+BufClass;` in `buf_rt.h`. The emitter names it with `GetType("BufClass")`;
+that resolves because `buf_rt.h` arrives via `#include @shared` and cccc's
+generated forward-declaration block sits *below* that include, so the
+typedef is in scope as an emitted global's element type. A bare
+`GetType("unsigned char")` returns `NULL` — the comptime type resolver has
+no spelling for a multi-word base type — so the table type has to go through
+the typedef name. The emitted `buf_dfa_class` is then a true `unsigned char`
+array matching `buf_run`'s `const unsigned char *cls` parameter with no cast
+in the wrapper.
 
 ## The driver: `buf_run`
 
@@ -167,12 +169,11 @@ with an anonymous typedef.
 
 ## Comptime VM gotchas
 
-- Returning a small struct by value from a comptime function triggered
-  `error: return buffer pool was not rehydrated` (V1) — observed with
-  `buf_nfa.h`'s recursive fragment builder; not further isolated (recursion
-  may or may not be the trigger). Switching `{entry, exit}` to `int *`
-  out-params cleared it. Returning scalars is fine (`buf_rx.h` does it
-  throughout).
+- `buf_nfa.h`'s recursive fragment builder returns its `{entry, exit}` pair
+  through `int *` out-params rather than a by-value struct — the cases
+  already name the endpoints as plain locals, so there is no wrapper type to
+  define. A by-value struct return from a recursive comptime function is fine
+  if you want one.
 - A source `#define` is **not** forwarded into a comptime body — only `-D` on
   the cccc command line is. `BUF_SPEC` and `BUF_STOP_AFTER` are both `-D`s
   (`bin/buffalo` passes them); the `#ifndef` fallbacks in `src/buf_comptime.c`
@@ -181,9 +182,11 @@ with an anonymous typedef.
   reflection builtins (`GlobalVar`, `Quote`, …) — `buf_emit.h` does. It does
   not need the `[[cccc::comptime]]` attribute; adding it actually made the
   function invisible to `src/buf_comptime.c`'s entry point.
-- `GetType` in the comptime VM resolves `"char"`, `"short"`, `"int"` but not
-  `"unsigned char"` (nor `"uchar"` / `"u8"`). Emit the widest signed type that
-  fits and cast at the use site.
+- `GetType` in the comptime VM resolves single-keyword base types (`"char"`,
+  `"short"`, `"int"`) but not a multi-word spelling like `"unsigned char"`
+  (nor `"uchar"` / `"u8"`) — it returns `NULL`. Reach an unsigned or
+  fixed-width element type through a `typedef` in an `#include @shared`
+  header and name *that* (`GetType("BufClass")`); the class table does this.
 - The comptime VM runs interpreted, ~1000–1300× slower than the same code
   under a plain `cc` (`buf_dfa_build` for `big.bflo`: 1.8 ms native vs. ~2.25 s
   comptime). Keep the hot construction loops tight — an O(nstates) scan or a
@@ -196,24 +199,23 @@ with an anonymous typedef.
   the template text: `Quote("{ $1; }", s)`, not `"{ $1 }"` — a `$N` splice
   always parses in expression position even when the node behind it is a
   complete statement.
-- A `Quote()` template is validated (including `break`/`continue` and
+- An eager `Quote()` template is validated (including `break`/`continue` and
   variable-scope checks) at the point it is parsed, not after it is spliced
-  into an outer template — a statement built by its own `Quote()` call can't
-  `break`/`continue` out of, or reference a variable from, a loop it will only
-  be inside of once spliced elsewhere; `continue;`/`break;` as bare `Quote()`
-  text is rejected ("stray continue") at template-parse time regardless of
-  where it's later spliced. Keep a loop and anything scoped to it in one
-  `Quote()` call rather than composing it from smaller ones. **This is why the
-  driver loop stays in `buf_rt.c` and the emitter produces only data + a
-  one-line wrapper.** Filed as a cccc enhancement,
-  [~takeiteasy/cccc#1242](https://todo.sr.ht/~takeiteasy/cccc/1242).
+  into an outer template, so a loop body composed from a separate `Quote()`
+  call can't `break`/`continue` out of the loop it will only be inside of
+  once spliced. `QuoteLazy()` defers parsing until the splice and lifts that
+  restriction. buffalo does not need it: the emitter deliberately produces
+  only *data* (the `static const` tables) plus a one-line wrapper, and the
+  longest-match loop stays hand-written in `buf_rt.c` — a single shared,
+  plain-`cc`, zero-cccc runtime across every generated lexer, which keeps the
+  `.gen.c` small and the generated/native parity check simple.
 - Externs referenced from a `Quote()` template must come in via `#include
-  @shared`, not `@comptime`. cccc emits its forward-declaration block for the
-  generated symbols *ahead* of that `@shared` include in the `.gen.c`, so a
-  `typedef` from the shared header cannot be an emitted global's element type
-  — only the base types `GetType` knows. Worse: cccc doesn't catch this itself
-  — it reports success and emits C that fails to compile. Filed as a cccc bug,
-  [~takeiteasy/cccc#1241](https://todo.sr.ht/~takeiteasy/cccc/1241).
+  @shared`, not `@comptime` (a plain-include extern is rejected by `Quote`'s
+  identifier resolver). A `typedef` from that `@shared` header **can** be an
+  emitted global's element type: cccc's generated forward-declaration block
+  sits below the `@shared` include in the `.gen.c`, so the name is in scope
+  where the tables are declared. `buf_dfa_class`'s `BufClass` element type
+  relies on this.
 - A global the same macro just created with `GlobalVar` is not visible to a
   `Quote()` template at the same parse point via its auto-synthesised
   `extern` — `PublishNodeAt(var, SyntheticToken("name"))` it first.

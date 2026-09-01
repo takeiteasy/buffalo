@@ -101,9 +101,10 @@ static void buf_nfa_eps(BufNfa *nfa, int s, int t) {
 /* --- fragment builder (recurses over the regex AST) ---------------- */
 
 /* Compile AST node `node` into a Thompson fragment; its entry state lands in
- * *pin, its (epsilon-free) exit state in *pout. Out-params, not a returned
- * struct: cccc's comptime VM mishandles a by-value struct return from a
- * recursive comptime function ("return buffer pool was not rehydrated"). */
+ * *pin, its (epsilon-free) exit state in *pout. Out-params rather than a
+ * returned `{in, out}` struct: the fragment cases already name the endpoints
+ * as plain `int` locals, so threading them through pointers keeps the
+ * recursion allocation-free with no wrapper type. */
 static void buf_nfa_frag(BufNfa *nfa, BufRx *rx, int node, int *pin, int *pout) {
     BufRxNode *nd = &rx->nodes[node];
 

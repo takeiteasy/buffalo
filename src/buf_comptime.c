@@ -1,26 +1,30 @@
 /*
- * buf_comptime.c -- the only file buffalo ever passes to cccc.
+ * buf_comptime.c -- the file buffalo passes to cccc; it drives the comptime
+ * pass.
  *
- * It runs entirely inside cccc's comptime VM. The spec reader (buf_rx.h) and
- * the token-header validator (buf_tokcheck.h) are pulled in with `#include
- * @comptime` -- ordinary static function bodies in an @comptime-routed
- * header compile into the comptime program and are callable, recursively.
- * `buf_rt.h` comes in with `#include @shared` (not `@comptime`): from M4 the
- * emitted `buf_next` wrapper will name `buf_run` and the table symbols in a
- * Quote() template, and a plain-include extern is rejected by Quote's
- * identifier resolver.
+ * It runs entirely inside cccc's comptime VM. The pure-C modules are ordinary
+ * `.h`/`.c` pairs (buf_rx, buf_tokcheck, buf_nfa, buf_dfa) whose `.c` bodies
+ * are pulled straight in here with `#include @comptime "buf_*.c"` (so
+ * `-Isrc` is on the cccc command line) -- the bodies compile into the
+ * comptime program and are callable, recursively. The same `.c` files link
+ * into the host unit tests under a plain `cc`. buf_emit.h stays header-only:
+ * it uses the reflection builtins and only ever compiles here.
+ * `buf_rt.h` comes in with `#include @shared` (not `@comptime`): the emitted
+ * `buf_next` wrapper names `buf_run` and the table symbols in a Quote()
+ * template, and a plain-include extern is rejected by Quote's identifier
+ * resolver.
  *
- * This file is the boundary: buf_rx.h / buf_tokcheck.h never call
- * MacroErrorAt (they must also build under a plain `cc` for the host unit
- * tests), so they accumulate a sticky first-wins error string, and this
- * file lifts that string into a comptime diagnostic pointed at the .bflo file.
+ * This file is the boundary: the modules never call MacroErrorAt (they must
+ * also build under a plain `cc` for the host unit tests), so they accumulate
+ * a sticky first-wins error string, and this file lifts that string into a
+ * comptime diagnostic pointed at the .bflo file.
  *
  * A successful run reads the spec, validates the token header, builds the
- * NFA (buf_nfa.h) then the DFA (buf_dfa.h), and emits the four `static
- * const` DFA tables plus the buf_next wrapper (buf_emit.h) into the .gen.c.
- * That file then builds with a plain `cc` against runtime/buf_rt.c and an
- * example _main.c (`make generated`); `cccc -c=native` does the whole thing
- * in one invocation (`make native`), and the two outputs must match.
+ * NFA (buf_nfa) then the DFA (buf_dfa), and emits the four `static const`
+ * DFA tables plus the buf_next wrapper (buf_emit.h) into the .gen.c. That
+ * file then builds with a plain `cc` against runtime/buf_rt.c and an example
+ * _main.c (`make generated`); `cccc -c=native` does the whole thing in one
+ * invocation (`make native`), and the two outputs must match.
  *
  * M3 instrumentation (see docs/performance.md):
  *
@@ -35,7 +39,7 @@
  *
  * Invocation (see bin/buffalo and docs/getting-started.md):
  *
- *   cccc -c=generated src/buf_comptime.c -Iinclude/buffalo -Iruntime \
+ *   cccc -c=generated src/buf_comptime.c -Iinclude/buffalo -Isrc -Iruntime \
  *       -D BUF_SPEC='"examples/calc.bflo"' -o examples/calc.bflo.gen.c
  *
  * -D rather than a source #define: comptime bodies do not see ordinary
@@ -44,10 +48,10 @@
  * appending "_tokens.h" (examples/calc.bflo -> examples/calc_tokens.h).
  */
 #include @shared "buf_rt.h"
-#include @comptime "buf_rx.h"
-#include @comptime "buf_tokcheck.h"
-#include @comptime "buf_nfa.h"
-#include @comptime "buf_dfa.h"
+#include @comptime "buf_rx.c"
+#include @comptime "buf_tokcheck.c"
+#include @comptime "buf_nfa.c"
+#include @comptime "buf_dfa.c"
 #include @comptime "buf_emit.h"
 #include @comptime <stdio.h>
 #include @comptime <string.h>

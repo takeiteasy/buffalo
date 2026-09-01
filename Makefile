@@ -1,22 +1,25 @@
 # buffalo -- build / check / clean
 #
 # The digits demo lexer (build/digits) still builds and runs with the system
-# cc only, no cccc. The comptime front half is header-only, dependency-free C
-# pulled into cccc via `#include @comptime`, and also built with a plain cc
-# for host unit tests:
+# cc only, no cccc. The comptime front half is ordinary .h/.c module pairs:
+# the headers declare, src/buf_*.c define. src/buf_comptime.c drives the pass
+# and pulls each module's .c body straight in with `#include @comptime
+# "buf_*.c"` (so cccc runs with -Isrc). The same .c files also build with a
+# plain cc, linked into the host unit tests:
 #
-#   buf_rx.h        .bflo spec + regex reader         -> tests/t_rx.c
-#   buf_tokcheck.h  <name>_tokens.h validator         -> tests/t_tokcheck.c
-#   buf_nfa.h       Thompson construction (AST->NFA)  -> tests/t_nfa.c
-#   buf_dfa.h       subset construction (NFA->DFA)    -> tests/t_dfa.c
-#   buf_grammar.h   LALR(1) table construction        -> tests/t_grammar.c
+#   buf_rx.{h,c}        .bflo spec + regex reader         -> tests/t_rx.c
+#   buf_tokcheck.{h,c}  <name>_tokens.h validator         -> tests/t_tokcheck.c
+#   buf_nfa.{h,c}       Thompson construction (AST->NFA)  -> tests/t_nfa.c
+#   buf_dfa.{h,c}       subset construction (NFA->DFA)    -> tests/t_dfa.c
+#   buf_grammar.{h,c}   LALR(1) table construction        -> tests/t_grammar.c
 #
-# buf_grammar.h is host-test-only for now (not yet wired into
+# buf_grammar is host-test-only for now (not yet wired into
 # src/buf_comptime.c's comptime pipeline -- see the tracker) but follows the
-# same dual-compile shape as the other comptime headers above.
+# same dual-compile shape as the other modules above.
 #
-# buf_emit.h (DFA -> GlobalVar tables + buf_next) is comptime-VM only -- it
-# uses cccc's reflection builtins, so no host test includes it.
+# buf_emit.{h,c} (DFA -> GlobalVar tables + buf_next) is comptime-VM only --
+# it uses cccc's reflection builtins, so no host test links it and it is not
+# built by a plain cc.
 #
 # t_dfa and t_grammar also link runtime/buf_rt.c and drive the real buf_run
 # over freshly built tables. The `spec` target runs the full comptime pipeline over
@@ -40,7 +43,13 @@ RT_SRC   := runtime/buf_rt.c
 RT_HDRS  := runtime/buf_rt.h
 CT_HDRS  := include/buffalo/buf_rx.h include/buffalo/buf_tokcheck.h \
             include/buffalo/buf_nfa.h include/buffalo/buf_dfa.h \
-            include/buffalo/buf_grammar.h
+            include/buffalo/buf_grammar.h include/buffalo/buf_emit.h
+# The pure-C comptime modules: `.h` declares, `src/buf_*.c` defines. `cc`
+# links them into the host tests; src/buf_comptime.c `#include @comptime`s the
+# four it needs (buf_grammar isn't wired into the pipeline yet). They are
+# build inputs to the cccc targets but not command-line arguments.
+CT_SRC   := src/buf_rx.c src/buf_tokcheck.c src/buf_nfa.c src/buf_dfa.c \
+            src/buf_grammar.c
 
 EXAMPLES := digits calc clike json
 
@@ -58,23 +67,26 @@ build/digits: examples/digits_main.c examples/digits_tables.c $(RT_SRC) $(RT_HDR
 	    examples/digits_main.c examples/digits_tables.c $(RT_SRC)
 
 # Host unit tests for the comptime headers -- plain cc, no cccc.
-build/t_rx: tests/t_rx.c $(CT_HDRS) | build
-	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_rx.c
+# Each test links the dual-compiled module sources (CT_SRC). Unused modules
+# in a test are dead code in the link, not an error -- simpler than tracking
+# a per-test subset. t_dfa/t_grammar/t_parse additionally drive the runtime.
+build/t_rx: tests/t_rx.c $(CT_HDRS) $(CT_SRC) | build
+	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_rx.c $(CT_SRC)
 
-build/t_tokcheck: tests/t_tokcheck.c $(CT_HDRS) | build
-	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_tokcheck.c
+build/t_tokcheck: tests/t_tokcheck.c $(CT_HDRS) $(CT_SRC) | build
+	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_tokcheck.c $(CT_SRC)
 
-build/t_nfa: tests/t_nfa.c $(CT_HDRS) | build
-	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_nfa.c
+build/t_nfa: tests/t_nfa.c $(CT_HDRS) $(CT_SRC) | build
+	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_nfa.c $(CT_SRC)
 
-build/t_dfa: tests/t_dfa.c $(CT_HDRS) $(RT_SRC) $(RT_HDRS) | build
-	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_dfa.c $(RT_SRC)
+build/t_dfa: tests/t_dfa.c $(CT_HDRS) $(CT_SRC) $(RT_SRC) $(RT_HDRS) | build
+	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_dfa.c $(CT_SRC) $(RT_SRC)
 
-build/t_grammar: tests/t_grammar.c $(CT_HDRS) $(RT_SRC) $(RT_HDRS) | build
-	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_grammar.c $(RT_SRC)
+build/t_grammar: tests/t_grammar.c $(CT_HDRS) $(CT_SRC) $(RT_SRC) $(RT_HDRS) | build
+	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_grammar.c $(CT_SRC) $(RT_SRC)
 
-build/t_parse: tests/t_parse.c $(CT_HDRS) $(RT_SRC) $(RT_HDRS) | build
-	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_parse.c $(RT_SRC)
+build/t_parse: tests/t_parse.c $(CT_HDRS) $(CT_SRC) $(RT_SRC) $(RT_HDRS) | build
+	$(CC) $(CFLAGS) -Iinclude/buffalo -Iruntime -o $@ tests/t_parse.c $(CT_SRC) $(RT_SRC)
 
 test: build/t_rx build/t_tokcheck build/t_nfa build/t_dfa build/t_grammar build/t_parse
 	@build/t_rx
@@ -107,7 +119,7 @@ spec: | build
 # The lowered .gen.c: `bin/buffalo lex` runs cccc -c=generated over
 # src/buf_comptime.c with the spec as -D BUF_SPEC.
 build/%.bflo.gen.c: examples/%.bflo examples/%_tokens.h src/buf_comptime.c \
-                 include/buffalo/buf_emit.h $(CT_HDRS) $(RT_HDRS) | build
+                 $(CT_SRC) $(CT_HDRS) $(RT_HDRS) | build
 	@bin/buffalo lex examples/$*.bflo -o $@
 
 # Plain-cc build of a lowered spec: .gen.c + runtime + that example's driver.
@@ -120,11 +132,11 @@ build/%_gen: build/%.bflo.gen.c examples/%_main.c $(RT_SRC) $(RT_HDRS) \
 # in a single invocation, no intermediate .gen.c. BUF_STOP_AFTER=5 must be a
 # -D (the source #define fallback is not forwarded into the comptime body) --
 # bin/buffalo passes it on the generated path; here it is explicit.
-build/%_native: src/buf_comptime.c examples/%_main.c $(RT_SRC) \
-                include/buffalo/buf_emit.h $(CT_HDRS) $(RT_HDRS) \
+build/%_native: src/buf_comptime.c $(CT_SRC) examples/%_main.c $(RT_SRC) \
+                $(CT_HDRS) $(RT_HDRS) \
                 examples/%.bflo examples/%_tokens.h | build
 	$(CCCC) -c=native src/buf_comptime.c $(RT_SRC) examples/$*_main.c \
-	    -Iinclude/buffalo -Iruntime -Iexamples \
+	    -Iinclude/buffalo -Isrc -Iruntime -Iexamples \
 	    -D BUF_SPEC='"examples/$*.bflo"' -D BUF_STOP_AFTER=5 -o $@
 
 # generated: build every example's lowered spec with a plain cc and run its

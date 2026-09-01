@@ -56,7 +56,7 @@ run_once() {
         close $f;
         exit($rc == 0 ? 0 : 1);
     ' -- "$CCCC" -c=generated "$SRC" \
-        -Iinclude/buffalo -Iruntime \
+        -Iinclude/buffalo -Isrc -Iruntime \
         -D "BUF_SPEC=\"$_spec\"" -D "BUF_STOP_AFTER=$_stop" $_extra \
         -o "$OUT" >/dev/null 2>&1
     cat "$BENCH_T"
@@ -106,7 +106,7 @@ for spec in $SPECS; do
 
     # Arena peaks + generated-file size for the full pipeline.
     echo
-    "$CCCC" -c=generated "$SRC" -Iinclude/buffalo -Iruntime \
+    "$CCCC" -c=generated "$SRC" -Iinclude/buffalo -Isrc -Iruntime \
         -D "BUF_SPEC=\"$spec\"" -D BUF_STOP_AFTER=5 -D BUF_STATS \
         -o "$OUT" 2>&1 >/dev/null | sed 's/^/  /' || true
     printf '  gen.c size    %8d bytes\n\n' "$(wc -c < "$OUT")"

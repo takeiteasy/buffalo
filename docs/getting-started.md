@@ -114,9 +114,11 @@ bin/buffalo lex examples/digits.bflo -o build/digits.bflo.gen.c
 cc -O2 -Iruntime -Iexamples -o build/digits_gen \
     build/digits.bflo.gen.c examples/digits_main.c runtime/buf_rt.c
 
-# one-shot path: cccc does lowering + build in one step, no intermediate file
+# one-shot path: cccc does lowering + build in one step, no intermediate file.
+# buf_comptime.c pulls the src/buf_*.c comptime modules in itself with
+# `#include @comptime`, so cccc just needs -Isrc on the include path.
 cccc -c=native src/buf_comptime.c runtime/buf_rt.c examples/digits_main.c \
-    -Iinclude/buffalo -Iruntime -Iexamples \
+    -Iinclude/buffalo -Isrc -Iruntime -Iexamples \
     -D BUF_SPEC='"examples/digits.bflo"' -D BUF_STOP_AFTER=5 -o build/digits_native
 ```
 

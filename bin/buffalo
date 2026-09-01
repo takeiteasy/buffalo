@@ -17,6 +17,12 @@ set -eu
 CCCC="${CCCC:-cccc}"
 here=$(cd "$(dirname "$0")/.." && pwd)
 COMPTIME_SRC="$here/src/buf_comptime.c"
+# The pure-C comptime modules. buf_comptime.c pulls their .c bodies in with
+# `#include @comptime "buf_*.c"`, so they only need to be on the include path
+# (-Isrc below), not the cccc argument list. Compile-time only -- never
+# linked into a generated program.
+COMPTIME_MODULES="$here/src/buf_rx.c $here/src/buf_tokcheck.c \
+$here/src/buf_nfa.c $here/src/buf_dfa.c"
 
 usage() {
     cat <<'EOF'
@@ -61,12 +67,15 @@ cmd_lex() {
         echo "buffalo lex: $COMPTIME_SRC does not exist." >&2
         exit 3
     fi
+    for m in $COMPTIME_MODULES; do
+        [ -f "$m" ] || { echo "buffalo lex: missing module $m" >&2; exit 3; }
+    done
 
     # BUF_STOP_AFTER (M3 ablation ladder) has to be a -D: a source #define is
     # not forwarded into a comptime body. 5 = full pipeline incl. emit. A
     # trailing `-- -D BUF_STOP_AFTER=n [-D BUF_STATS]` overrides it (last -D
     # wins), which is how tests/bench.sh drives the per-phase measurement.
-    set -- -c=generated "$COMPTIME_SRC" -Iinclude/buffalo -Iruntime \
+    set -- -c=generated "$COMPTIME_SRC" -Iinclude/buffalo -Isrc -Iruntime \
         -D "BUF_SPEC=\"$spec\"" -D BUF_STOP_AFTER=5
     [ -n "$tokens" ] && set -- "$@" -D "BUF_TOKENS_H=\"$tokens\""
     set -- "$@" -o "$out"

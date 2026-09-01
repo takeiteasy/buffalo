@@ -7,15 +7,24 @@ runtime data-layout contract. Copied wholesale from cccc's `ccccl` example.
 
 | Universe | Files | Compiled by | Runs |
 |---|---|---|---|
-| **Comptime** | `src/buf_comptime.c` (the only file passed to cccc) + `include/buffalo/*.h` pulled in via `#include @comptime` | cccc's comptime VM | at compile time; never reaches the generated program |
+| **Comptime** | `src/buf_comptime.c` (the pass driver) + the `buf_rx` / `buf_tokcheck` / `buf_nfa` / `buf_dfa` / `buf_grammar` `.h`/`.c` module pairs, plus `include/buffalo/buf_emit.h` | cccc's comptime VM | at compile time; never reaches the generated program |
 | **Runtime** | `runtime/buf_rt.{h,c}` | system `cc` | in the final program; zero cccc dependency |
 
-The comptime headers are ordinary, dependency-free, arena-based C: fixed-size
-arrays, no `malloc`, `snprintf` into an error buffer, first-error-wins sticky
-flag (they cannot call `MacroErrorAt` directly because they must also compile
-under a plain `cc` for host unit tests). `src/buf_comptime.c` is the boundary: it
-is the only place that calls `MacroErrorAt`, converting a header's sticky error
-string into a comptime diagnostic pointed at the `.bflo` file.
+Each comptime module is an ordinary `.h`/`.c` pair: the header declares, the
+`src/buf_*.c` defines. `src/buf_comptime.c` pulls the module bodies it needs
+straight in with `#include @comptime "buf_rx.c"` … (so `cccc` runs with
+`-Isrc`); the bodies compile into the comptime program and are callable
+recursively. The same `.c` files link into the host unit tests under a plain
+`cc`. `buf_emit` stays header-only — it uses the reflection builtins and is
+pulled in the same way, the shape `ccccl` uses for its emission code.
+
+The module code is dependency-free, arena-based C: fixed-size arrays, no
+`malloc`, `snprintf` into an error buffer, first-error-wins sticky flag
+(they cannot call `MacroErrorAt` directly because they must also compile
+under a plain `cc` for the host unit tests). `src/buf_comptime.c` is the
+boundary: it is the only place that calls `MacroErrorAt`, converting a
+module's sticky error string into a comptime diagnostic pointed at the
+`.bflo` file.
 
 `#include @shared "buf_rt.h"` (not `@comptime`) is deliberate: a `Quote()`
 template that names an extern — `buf_run`, the table symbols — is rejected by
@@ -23,16 +32,16 @@ cccc's identifier resolver unless that extern arrived via `@shared`.
 
 ### Comptime modules
 
-- `buf_rx.h` — spec-file + regex reader: `.bflo` text → regex AST,
+- `buf_rx.{h,c}` — spec-file + regex reader: `.bflo` text → regex AST,
   `line:col` per node. Character classes are desugared into a 256-bit byte set
   at parse time (so alphabet partitioning is a set-grouping pass). A rule
   whose regex is nullable is rejected here with a `line:col` error. It also
   reads the optional `%grammar` section (see below) — productions, resolved
   terminal/nonterminal symbols, `%start` — with the same `line:col`
-  diagnostics; `buf_grammar.h` (below) builds LALR(1) parser tables from it.
-- `buf_tokcheck.h` — validate a checked-in `<name>_tokens.h` against
+  diagnostics; `buf_grammar.{h,c}` (below) builds LALR(1) parser tables from it.
+- `buf_tokcheck.{h,c}` — validate a checked-in `<name>_tokens.h` against
   `%tokens`.
-- `buf_nfa.h` — Thompson construction: regex AST → ε-NFA. One fragment
+- `buf_nfa.{h,c}` — Thompson construction: regex AST → ε-NFA. One fragment
   per AST node; each NFA state has at most one labelled (byte-set) edge and up
   to two ε edges, which covers every fragment. Each rule's fragment ends in an
   accept state tagged with the rule index; all rule fragments hang off state 0
@@ -41,9 +50,9 @@ cccc's identifier resolver unless that extern arrived via `@shared`.
   nullable *rule* is rejected) and puts an ε cycle in the NFA, so every ε walk
   is worklist + visited-set, never recursive. Fragment entry/exit come back
   through `int *` out-params: the fragment cases already name their endpoints
-  as plain locals, and threading them through pointers keeps the recursion
-  allocation-free.
-- `buf_dfa.h` — subset construction: ε-NFA → DFA over alphabet
+  as plain locals, so pointer threading keeps the recursion allocation-free
+  with no wrapper type.
+- `buf_dfa.{h,c}` — subset construction: ε-NFA → DFA over alphabet
   equivalence classes (not raw bytes). The alphabet partition starts with all
   256 bytes in one class and splits on each CLASS-leaf byte set, then
   **renumbers classes by first appearance over bytes 0..255** so the numbering
@@ -67,15 +76,16 @@ cccc's identifier resolver unless that extern arrived via `@shared`.
   (subset construction already lands near the minimal DFA) while adding its
   own `O(passes · nstates · nclass)` pass to the comptime hot path — see
   [performance.md](performance.md).
-- `buf_grammar.h` — LALR(1) parser tables over the `%grammar` section's
+- `buf_grammar.{h,c}` — LALR(1) parser tables over the `%grammar` section's
   productions. See [The `.bflo` grammar section](#the-bflo-grammar-section)
   and [LALR(1) table construction](#lalr1-table-construction) below.
   Host-test-only for now (`tests/t_grammar.c`) — not yet wired into
   `src/buf_comptime.c`'s comptime pipeline (follow-on work, see the tracker).
 - `buf_emit.h` — DFA → four file-scope `static const` tables (raw
-  `GlobalVarSetInitData` blobs) + the `buf_next` wrapper fn. Unlike the other
-  comptime headers this one uses cccc's reflection builtins and is never
-  dual-compiled by a plain `cc`. Its output builds with a stock `cc` against
+  `GlobalVarSetInitData` blobs) + the `buf_next` wrapper fn. Header-only and
+  unlike the other modules never split into a `.c`: it uses cccc's reflection
+  builtins, is pulled straight into `src/buf_comptime.c` with `#include
+  @comptime`, and is never compiled by a plain `cc`. Its output builds with a stock `cc` against
   `runtime/buf_rt.c` and an example `_main.c`.
 
 ### Runtime module
@@ -88,8 +98,9 @@ sharp edges around `while` / `break` / `continue` (see below).
 
 ## Generated table file — shape
 
-`cccc -c=generated src/buf_comptime.c -D BUF_SPEC='"calc.bflo"'` produces a
-`.gen.c` containing four file-scope `static` tables and one wrapper:
+`bin/buffalo lex calc.bflo` (which runs `cccc -c=generated src/buf_comptime.c
+-Iinclude/buffalo -Isrc -D BUF_SPEC='"calc.bflo"'`) produces a `.gen.c`
+containing four file-scope `static` tables and one wrapper:
 
 ```c
 static const BufClass buf_dfa_class[256];             /* byte -> class 0..NCLASS-1 */
@@ -264,11 +275,11 @@ tables at runtime. A worked example and comptime-pipeline wiring for
 
 ## LALR(1) table construction
 
-`buf_grammar.h` turns a validated `%grammar` section into LALR(1) `action`/
-`goto` tables — the parser-side counterpart to `buf_nfa.h`/`buf_dfa.h` on the
-lexer side, and built the same way: header-only, fixed arenas, no malloc,
-dual-compiled (host `cc` for `tests/t_grammar.c`; not yet wired into the
-comptime pipeline — see [Comptime modules](#comptime-modules) above).
+`buf_grammar.{h,c}` turns a validated `%grammar` section into LALR(1)
+`action`/`goto` tables — the parser-side counterpart to `buf_nfa`/`buf_dfa`
+on the lexer side, and built the same way: `.h`/`.c` pair, fixed arenas, no
+malloc, dual-compiled (host `cc` for `tests/t_grammar.c`; not yet wired into
+the comptime pipeline — see [Comptime modules](#comptime-modules) above).
 
 **The augmented grammar.** A synthetic production `S' -> %start` drives the
 closure over the whole automaton and the accept action. It is never written

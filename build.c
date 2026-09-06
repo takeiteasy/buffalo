@@ -129,12 +129,16 @@ int build_main(Builder *ctx) {
     AddCFlag(tokgen, "-O2");
     AddCFlag(tokgen, "-Wall");
 
-    // Smoke-check the CLI end to end: generate calc's header, then prove the
-    // emitted text is a compilable C header.
+    // Smoke-check the CLI end to end: generate calc's header, prove the
+    // emitted text is a compilable C header, then prove --check passes on an
+    // up-to-date file (its drift/missing paths are exit-1 gates, exercised
+    // by hand; the sandbox shell cannot assert an expected failure).
     BuildTarget *toksmoke = RunCustom(
         ctx, "check-tokens-cli",
         "bin/buffalo tokens examples/calc.bflo -o build/calc_tokens.gen.h && "
-        "cc -fsyntax-only -x c build/calc_tokens.gen.h");
+        "cc -fsyntax-only -x c build/calc_tokens.gen.h && "
+        "bin/buffalo tokens examples/calc.bflo -o build/calc_tokens.gen.h "
+        "--check");
     DependsOn(toksmoke, tokgen);
     DependsOn(check, toksmoke);
 

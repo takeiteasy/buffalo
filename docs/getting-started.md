@@ -131,6 +131,10 @@ headers in `examples/` are hand-written and stay that way, and the comptime
 pass validates a generated header exactly like a hand-written one. Treat a
 generated header as a build artifact — gitignore it next to your `*.gen.c`
 files and regenerate it from the spec (a one-line rule in your build).
+`--check` is the freshness gate for that flow: it regenerates in memory and
+byte-compares against the file at the output path instead of writing — exit
+0 when up to date, 1 when missing or drifted — so a build script can fail
+fast on a spec edit that has not been regenerated yet.
 
 ## `bin/buffalo`
 

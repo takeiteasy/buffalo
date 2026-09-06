@@ -7,10 +7,14 @@
  * demand the first time; build.c also declares it as a target so the CLI
  * smoke check is hermetic.
  *
- *     buf_tokgen SPEC.bflo [-o PATH]
+ *     buf_tokgen SPEC.bflo [-o PATH] [--check]
  *
  * The default output path mirrors src/buf_comptime.c's token-header
  * derivation: SPEC with a trailing ".bflo" replaced by "_tokens.h".
+ *
+ * --check regenerates in memory and byte-compares against the file at the
+ * output path instead of writing: exit 0 if identical, 1 if the file is
+ * missing or has drifted (the gate a build runs before `buffalo lex`).
  */
 #include <stdio.h>
 #include <string.h>
@@ -19,7 +23,7 @@
 #include "buf_tokgen.h"
 
 static void usage(void) {
-    fprintf(stderr, "usage: buf_tokgen SPEC.bflo [-o PATH]\n");
+    fprintf(stderr, "usage: buf_tokgen SPEC.bflo [-o PATH] [--check]\n");
 }
 
 /* SPEC.bflo -> SPEC_tokens.h (trailing ".bflo" replaced, otherwise appended)
@@ -36,11 +40,40 @@ static void derive_out_path(char *dst, int cap, const char *spec) {
     memcpy(dst + base, "_tokens.h", soff + 1);
 }
 
+/* --check: byte-compare the file at `out` against the freshly generated
+ * text. 0 identical / 1 missing, unreadable or drifted. */
+static int check_mode(const char *spec, const char *out, const BufTg *tg) {
+    static char disk[BUF_TG_OUT_MAX + 1]; /* +1 detects an oversized file */
+    size_t      n;
+    FILE       *f = fopen(out, "rb");
+
+    if (!f) {
+        fprintf(stderr, "buf_tokgen: '%s' does not exist (generate it with "
+                        "'buf_tokgen %s -o %s')\n",
+                out, spec, out);
+        return 1;
+    }
+    n = fread(disk, 1, sizeof(disk), f);
+    if (ferror(f)) {
+        fprintf(stderr, "buf_tokgen: cannot read '%s'\n", out);
+        fclose(f);
+        return 1;
+    }
+    fclose(f);
+    if (n == (size_t)tg->out_len && memcmp(disk, tg->out, n) == 0) return 0;
+    fprintf(stderr,
+            "buf_tokgen: '%s' is out of date with %s (%zu bytes on disk, %d "
+            "generated; regenerate with 'buf_tokgen %s -o %s')\n",
+            out, spec, n, tg->out_len, spec, out);
+    return 1;
+}
+
 int main(int argc, char **argv) {
     static BufRx rx; /* ~megabyte-scale fixed arenas; keep off the stack */
     static BufTg tg;
     char        outbuf[512];
     const char *spec = NULL, *out = NULL;
+    int         check = 0;
     FILE       *f;
     int         i;
 
@@ -52,6 +85,8 @@ int main(int argc, char **argv) {
                 return 2;
             }
             out = argv[++i];
+        } else if (strcmp(argv[i], "--check") == 0) {
+            check = 1;
         } else if (spec) {
             fprintf(stderr, "buf_tokgen: unexpected argument '%s'\n", argv[i]);
             usage();
@@ -82,6 +117,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "buf_tokgen: %s\n", tg.error);
         return 1;
     }
+
+    if (check) return check_mode(spec, out, &tg);
 
     f = fopen(out, "wb");
     if (!f) {

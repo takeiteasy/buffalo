@@ -44,7 +44,7 @@ commands:
         Default output: SPEC.bflo.parse.gen.c
         The spec must carry a %grammar section; --tokens works as for `lex`.
 
-  tokens SPEC.bflo [-o TOK.h]
+  tokens SPEC.bflo [-o TOK.h] [--check]
         Opt-in generator: emit a <name>_tokens.h token header from the
         spec's %tokens list, instead of hand-maintaining one. Default
         output: SPEC with a trailing ".bflo" replaced by "_tokens.h".
@@ -52,6 +52,9 @@ commands:
         generated header as a build artifact (gitignore it like *.gen.c).
         The tool binary (build/buf_tokgen) is plain cc with no cccc
         dependency, and is built here on demand the first time.
+        --check regenerates in memory and byte-compares against the file
+        at the output path instead of writing: exit 0 if identical, 1 if
+        missing or drifted (a gate to run before `lex`).
 
   version
   help
@@ -144,11 +147,13 @@ cmd_tokens() {
     [ $# -ge 1 ] || { echo "buffalo tokens: missing SPEC.bflo" >&2; exit 2; }
     spec=$1; shift
     out=""
+    check=0
     while [ $# -gt 0 ]; do
         case $1 in
-            -o) [ $# -ge 2 ] || { echo "buffalo tokens: -o needs a path" >&2; exit 2; }
-                out=$2; shift 2 ;;
-            *)  echo "buffalo tokens: unexpected argument '$1'" >&2; exit 2 ;;
+            -o)      [ $# -ge 2 ] || { echo "buffalo tokens: -o needs a path" >&2; exit 2; }
+                     out=$2; shift 2 ;;
+            --check) check=1; shift ;;
+            *)       echo "buffalo tokens: unexpected argument '$1'" >&2; exit 2 ;;
         esac
     done
 
@@ -180,6 +185,9 @@ cmd_tokens() {
             || { echo "buffalo tokens: generator build failed" >&2; exit 3; }
     fi
 
+    if [ "$check" = 1 ]; then
+        exec "$tokgen" "$spec" --check -o "$out"
+    fi
     exec "$tokgen" "$spec" -o "$out"
 }
 

@@ -294,11 +294,13 @@ to disk — and needs no cccc at all, so `bin/buffalo` builds it on demand into
 cannot bootstrap a half-written spec: `buf_rx` reads and validates the whole
 lexer section first (every `%tokens` entry needs its rule), so the header
 only generates for a spec the reader already accepts — the same point where
-the header is actually needed. This stays opt-in: the checked-in headers in
-`examples/` are hand-written and unchanged, and `buf_tokcheck` keeps its full
-job either way — a generated header is loaded and validated exactly like a
-hand-written one, so `%tokens` remains the only authority on the enum in both
-workflows.
+the header is actually needed. `buffalo tokens --check` is the freshness
+gate for the generated flow: regenerate in memory, byte-compare against the
+file on disk, exit 1 on drift or absence. This stays opt-in: the checked-in
+headers in `examples/` are hand-written and unchanged, and `buf_tokcheck`
+keeps its full job either way — a generated header is loaded and validated
+exactly like a hand-written one, so `%tokens` remains the only authority on
+the enum in both workflows.
 
 ## The `.bflo` grammar section
 

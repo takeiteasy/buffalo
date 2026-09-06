@@ -21,9 +21,11 @@
  *
  * The scanner is deliberately small: it skips `/x ... x/` and `// ...`
  * comments and `#` preprocessor lines, finds the first `enum`, then collects
- * identifiers up to the matching `}`, tolerating `= <int>` initialisers and
- * trailing commas. It does not evaluate arbitrary constant expressions -- a
- * `= <int>` is read only for the two reserved slots.
+ * identifiers up to the matching `}`. Entries must be comma-separated (a
+ * missing separator is an error -- a comma-less list would not compile
+ * anyway, and the checker refusing it keeps generated headers honest);
+ * `= <int>` initialisers and trailing commas are tolerated, with a plain
+ * integer read only for the two reserved slots.
  */
 #ifndef BUF_TOKCHECK_H
 #define BUF_TOKCHECK_H

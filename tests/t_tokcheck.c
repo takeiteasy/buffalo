@@ -129,6 +129,17 @@ int main(void)
         "       TOK_LPAREN, TOK_RPAREN };\n",
         "where 'TOK_EOF' is expected", "missing reserved slots reported");
 
+    /* missing comma between entries (would not compile as C either) */
+    check_header(
+        "enum { TOK_EOF=0, TOK_ERROR=1 TOK_INT, TOK_FLOAT, TOK_IDENT,\n"
+        "       TOK_PLUS, TOK_STAR, TOK_LPAREN, TOK_RPAREN };\n",
+        "missing ','", "missing comma after the reserved pair reported");
+
+    check_header(
+        "enum { TOK_EOF=0, TOK_ERROR=1, TOK_INT TOK_FLOAT, TOK_IDENT,\n"
+        "       TOK_PLUS, TOK_STAR, TOK_LPAREN, TOK_RPAREN };\n",
+        "missing ','", "missing comma mid-list reported");
+
     /* no enum at all */
     check_header("#ifndef H\n#define H\n#endif\n",
                  "no `enum", "header without an enum reported");

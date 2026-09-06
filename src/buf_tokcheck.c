@@ -204,6 +204,9 @@ static int buf_tc_scan(BufTc *tc) {
         buf_tc_skip(&lx);
         if (lx.p < lx.end && *lx.p == ',') { lx.p++; continue; }
         if (lx.p < lx.end && *lx.p == '}') { lx.p++; break; }
+        buf_tc_err0(tc,
+                    "missing ',' between enum entries in the token header");
+        return -1;
     }
     return tc->has_error ? -1 : 0;
 }

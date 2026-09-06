@@ -18,13 +18,17 @@ generated file.
 ## Build
 
 ```sh
-make            # builds the digits demo lexer with the system cc, no cccc
-make check      # host unit tests + digits golden test; also spec/generated/native if cccc is present
-make spec       # runs the comptime pipeline (read + NFA + DFA + emit) over the specs (needs cccc)
-make generated  # lower every example to a .gen.c, then build + golden-diff each with a plain cc (needs cccc)
-make native     # one-shot cccc -c=native build of every example; generated/native parity diff (needs cccc)
-make bench      # per-phase comptime-cost measurement (needs cccc + perl)
+cccc --build build.c                       # everything: tests, digits demo, all examples
+cccc --build build.c --build-target=check  # the whole suite (same as the default build)
+cccc --build build.c --build-target=run-t_dfa        # one host unit test
+cccc --build build.c --build-target=calc_native      # one native example build
+cccc --build build.c --build-cache                   # incremental; header deps tracked
+cccc --build build.c --build-option=bench=1          # per-phase comptime-cost measurement
 ```
+
+`cccc` must be on `PATH` — it is the compiler for every example target, not
+just the build driver. The generated `.gen.c` files themselves still build
+with a stock `cc`; only producing them (and the native targets) needs cccc.
 
 ## Docs
 

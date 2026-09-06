@@ -118,8 +118,8 @@ BufToken buf_next(BufLexer *lx) {
 ```
 
 `examples/digits_tables.c` is a hand-written file of the same shape. It is
-the reference the emitter is diffed against (`make native`'s three-way
-parity check) and the one build path that needs no cccc at all. The emitter
+the reference the emitter is diffed against (`build.c`'s three-way parity
+check) and the one build path that needs no cccc at all. The emitter
 matches its `static const` and its `unsigned char` class-table element type
 (emitted as the `BufClass` typedef — see the class-table note below).
 

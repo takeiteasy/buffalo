@@ -34,9 +34,10 @@ blobs plus one `Quote()`d wrapper, lost in the noise.
 DFA minimisation does **not** move this ceiling, and the opt-in Moore pass
 (next section) measures why.
 
-Only `calc.bflo` and `clike.bflo` run through the comptime VM in `make check` (the
-`spec` target); `big.bflo`'s comptime path is reachable through
-`tests/bench.sh examples/big.bflo` only, kept out of `check` for its ~2.5 s.
+Only `calc.bflo` and `clike.bflo` run through the comptime VM in the default
+`build.c` suite (the `gen-*` steps); `big.bflo`'s comptime path is reachable
+through `tests/bench.sh examples/big.bflo` only, kept out of `check` for its
+~2.5 s.
 
 ## Method
 
@@ -69,9 +70,9 @@ ladder for each spec, N reps, and reports the median wall time and the
 per-phase delta, plus a `4 +DFA+min` row for the minimisation cost:
 
 ```sh
-make bench                     # calc.bflo, clike.bflo, expr.bflo
-REPS=9 tests/bench.sh           # more reps
-tests/bench.sh examples/big.bflo   # the stress spec (slow)
+cccc --build build.c --build-option=bench=1   # calc.bflo, clike.bflo, expr.bflo
+REPS=9 tests/bench.sh                         # more reps
+tests/bench.sh examples/big.bflo              # the stress spec (slow)
 ```
 
 `tests/t_dfa.c` prints the **native** per-phase timing (host `cc`, no cccc) at
@@ -252,6 +253,6 @@ as expected — a 300-state generated lexer is a ~100 KB file, most of it the
 `next` table.
 
 Emitted-table *correctness* (blob byte order, the `unsigned char` class
-table) is pinned by `make native`'s three-way diff — hand-written
+table) is pinned by `build.c`'s three-way parity diff — hand-written
 `build/digits` == generated == one-shot native — the only end-to-end check
 of cccc's string-literal blob round-trip.

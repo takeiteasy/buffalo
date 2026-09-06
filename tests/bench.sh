@@ -22,7 +22,7 @@
 # shows the cost of pulling buf_grammar.c into the comptime TU at all --
 # compare its median to plain rung 5 above.
 #
-#   make bench                 # calc.bflo, clike.bflo, expr.bflo
+#   cccc --build build.c --build-option=bench=1   # calc.bflo, clike.bflo, expr.bflo
 #   REPS=9 tests/bench.sh      # more reps
 #   tests/bench.sh path/to/spec.bflo ...
 #

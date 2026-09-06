@@ -23,8 +23,9 @@
  * NFA (buf_nfa) then the DFA (buf_dfa), and emits the four `static const`
  * DFA tables plus the buf_next wrapper (buf_emit.h) into the .gen.c. That
  * file then builds with a plain `cc` against runtime/buf_rt.c and an example
- * _main.c (`make generated`); `cccc -c=native` does the whole thing in one
- * invocation (`make native`), and the two outputs must match.
+ * _main.c (build.c's `*_gen` targets); `cccc -c=native` does the whole thing
+ * in one invocation (build.c's `*_native` targets), and the two outputs must
+ * match.
  *
  * With -D BUF_EMIT_PARSER (what `buffalo parse` passes), the spec's %grammar
  * section is additionally lowered: buf_grammar builds LALR(1) parser tables

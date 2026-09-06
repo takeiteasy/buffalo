@@ -3,21 +3,29 @@
 ## Prerequisites
 
 - A C compiler as `cc` (clang or gcc).
-- For `buffalo lex`, `make spec`, `make generated`, `make native`: the `cccc`
-  binary on `PATH`, or `$CCCC` pointing at it. The default `make` build and
-  the host unit tests need only `cc`.
+- The `cccc` binary on `PATH`, or `$CCCC` pointing at it. It runs the build
+  script (`build.c`) and compiles every example target; the host unit tests
+  and the `digits` demo are still plain-`cc` compiles under the hood, and the
+  generated `.gen.c` files still build with a stock `cc` — no cccc past that
+  point.
 
-## The no-cccc build
+## The build
 
-`make` builds `build/digits` from the runtime and a hand-written table file
-(`examples/digits_tables.c`) with the system `cc` alone — no cccc. That file
-is also the reference the emitter's output is diffed against (see
-`make native` below).
+One build script, `build.c`, run by cccc's build mode:
 
 ```sh
-make          # cc -O2 -Wall, no cccc -> build/digits
-make check    # host unit tests + the digits golden diff; also spec/generated/native when cccc is on PATH
+cccc --build build.c                       # everything: host tests, digits demo, all examples
+cccc --build build.c --build-target=check  # the whole suite
+cccc --build build.c --build-target=digits           # just the cc-only demo lexer
+cccc --build build.c --build-target=run-t_dfa        # one host unit test
+cccc --build build.c --build-target=calc_native      # one native example build
+cccc --build build.c --build-cache                   # incremental; header deps tracked
 ```
+
+`build/digits` is built from the runtime and a hand-written table file
+(`examples/digits_tables.c`) with the system `cc` alone — no cccc. That file
+is also the reference the emitter's output is diffed against (see
+[the two build paths](#the-two-build-paths)).
 
 `build/digits` reads stdin and prints one line per token — `NAME "lexeme"
 line:col`:
@@ -116,17 +124,21 @@ $ bin/buffalo parse examples/expr.bflo [-o OUT.parse.gen.c] [--tokens TOK.h]
 ## The two build paths
 
 There are two ways to get from a `.bflo` spec to a program, and they must
-produce byte-identical output. `make generated` and `make native` run both
-over every example in the suite — the lexer examples `digits`, `calc`,
-`clike`, `json` (`buffalo lex`), and the lex+parse example `expr` (`buffalo
-parse`, `_pgen` / `_pnative` build stems); `make check` invokes them under a
-no-cccc skip gate.
+produce byte-identical output. The build script runs both over every example
+in the suite — the lexer examples `digits`, `calc`, `clike`, `json`
+(`buffalo lex`), and the lex+parse example `expr` (`buffalo parse`, `_pgen` /
+`_pnative` stems); `check` aggregates every golden diff and parity check.
 
 ```sh
-make generated   # bin/buffalo lex -> .gen.c, then plain cc; golden diff per example
-make native      # one cccc -c=native invocation per example; generated/native parity
-                 # diff, plus a three-way diff against the hand-written build/digits
+cccc --build build.c --build-target=check          # everything at once
+cccc --build build.c --build-target=gen-digits     # one example's lowering step
+cccc --build build.c --build-target=digits_gen     # one example's generated build
+cccc --build build.c --build-target=digits_native  # one example's native build
 ```
+
+`bin/buffalo lex|parse` runs the full comptime pipeline over every reference
+spec as part of the `gen-*` steps (`spec` lowering — read + validate + NFA +
+DFA [+ grammar] + emit), so no separate spec pass is needed.
 
 The underlying invocations, for `digits`:
 

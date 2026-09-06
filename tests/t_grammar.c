@@ -108,7 +108,8 @@ static void test_calc_structure(void) {
 }
 
 /* The checked-in lex+parse example. Guards against a conflict regression in
- * examples/expr.bflo's grammar, which `make generated`/`native` also lower. */
+ * examples/expr.bflo's grammar, which build.c's `*_gen`/`*_native` targets
+ * also lower. */
 static void test_expr_example(void) {
     if (build("examples/expr.bflo") != 0) return;
 

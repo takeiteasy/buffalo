@@ -11,8 +11,8 @@
  * table's live prefix, not thousands of literal nodes -- emitted `static
  * const`; the `buf_next` wrapper is a one-line `Quote()` that forwards to
  * buf_run. The generated `.gen.c` then builds with a plain `cc` against
- * runtime/buf_rt.c + an example `_main.c`; `make generated` / `make native`
- * exercise both lowering paths and diff their output.
+ * runtime/buf_rt.c + an example `_main.c`; build.c's `*_gen` / `*_native`
+ * targets exercise both lowering paths and diff their output.
  *
  * Table contract (see runtime/buf_rt.h's buf_run):
  *

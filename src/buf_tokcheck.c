@@ -24,12 +24,39 @@ static void buf_tc_err_s(BufTc *tc, const char *fmt, const char *arg) {
     snprintf(tmp, sizeof(tmp), fmt, arg);
     buf_tc_err0(tc, tmp);
 }
-static void buf_tc_err_ss(BufTc *tc, const char *fmt, const char *a,
-                          const char *b) {
+
+/* Positioned variants: the error carries the header path plus a 1-based
+ * line:col. The rare O(src_len) walk is fine -- errors are first-wins. */
+static void buf_tc_pos(BufTc *tc, const char *cur, int *line, int *col) {
+    const char *p = tc->src;
+    int l = 1, c = 1;
+    if (cur > tc->src + tc->src_len) cur = tc->src + tc->src_len;
+    while (p < cur) {
+        if (*p == '\n') { l++; c = 1; } else c++;
+        p++;
+    }
+    *line = l;
+    *col  = c;
+}
+static void buf_tc_err_at(BufTc *tc, int line, int col, const char *msg) {
+    if (tc->has_error) return;
+    snprintf(tc->error, sizeof(tc->error), "%s:%d:%d: %s", tc->path, line,
+             col, msg);
+    tc->has_error = 1;
+}
+static void buf_tc_err_s_at(BufTc *tc, int line, int col, const char *fmt,
+                            const char *arg) {
+    char tmp[192];
+    if (tc->has_error) return;
+    snprintf(tmp, sizeof(tmp), fmt, arg);
+    buf_tc_err_at(tc, line, col, tmp);
+}
+static void buf_tc_err_ss_at(BufTc *tc, int line, int col, const char *fmt,
+                             const char *a, const char *b) {
     char tmp[192];
     if (tc->has_error) return;
     snprintf(tmp, sizeof(tmp), fmt, a, b);
-    buf_tc_err0(tc, tmp);
+    buf_tc_err_at(tc, line, col, tmp);
 }
 
 /* --- tokenising scan over the header text -------------------------- */
@@ -132,6 +159,7 @@ static int buf_tc_scan(BufTc *tc) {
     lx.p   = tc->src;
     lx.end = tc->src + tc->src_len;
     tc->count = 0;
+    buf_tc_pos(tc, lx.end, &tc->end_line, &tc->end_col);
 
     /* find `enum` */
     while (lx.p < lx.end) {
@@ -145,7 +173,8 @@ static int buf_tc_scan(BufTc *tc) {
         lx.p++; /* punctuation we do not care about before the enum */
     }
     if (!found) {
-        buf_tc_err0(tc, "no `enum { ... }` found in the token header");
+        buf_tc_err_at(tc, tc->end_line, tc->end_col,
+                      "no `enum { ... }` found in the token header");
         return -1;
     }
 
@@ -155,30 +184,43 @@ static int buf_tc_scan(BufTc *tc) {
         buf_tc_ident(&lx, id);
     buf_tc_skip(&lx);
     if (lx.p >= lx.end || *lx.p != '{') {
-        buf_tc_err0(tc, "malformed enum in the token header (expected '{')");
+        int l, c;
+        buf_tc_pos(tc, lx.p, &l, &c);
+        buf_tc_err_at(tc, l, c,
+                      "malformed enum in the token header (expected '{')");
         return -1;
     }
     lx.p++; /* '{' */
 
     for (;;) {
-        int n;
+        int          n;
+        int          l, c;
+        const char  *tok_start;
+
         buf_tc_skip(&lx);
         if (lx.p >= lx.end) {
-            buf_tc_err0(tc, "unterminated enum in the token header");
+            buf_tc_err_at(tc, tc->end_line, tc->end_col,
+                          "unterminated enum in the token header");
             return -1;
         }
         if (*lx.p == '}') { lx.p++; break; }
         if (*lx.p == ',') { lx.p++; continue; }
 
+        tok_start = lx.p;
         n = buf_tc_ident(&lx, id);
         if (n == 0) {
-            buf_tc_err0(tc, "unexpected token in enum body of the token header");
+            buf_tc_pos(tc, lx.p, &l, &c);
+            buf_tc_err_at(tc, l, c,
+                          "unexpected token in enum body of the token header");
             return -1;
         }
         if (tc->count >= BUF_TC_MAX_ENUM) {
-            buf_tc_err0(tc, "token header enum has too many entries");
+            buf_tc_pos(tc, tok_start, &l, &c);
+            buf_tc_err_at(tc, l, c, "token header enum has too many entries");
             return -1;
         }
+        buf_tc_pos(tc, tok_start, &tc->entries[tc->count].line,
+                   &tc->entries[tc->count].col);
         strncpy(tc->entries[tc->count].name, id, BUF_RX_NAME_MAX - 1);
         tc->entries[tc->count].name[BUF_RX_NAME_MAX - 1] = '\0';
         tc->entries[tc->count].has_value = 0;
@@ -190,10 +232,12 @@ static int buf_tc_scan(BufTc *tc) {
             lx.p++;
             buf_tc_skip(&lx);
             if (!buf_tc_int(&lx, &v)) {
-                buf_tc_err_s(tc,
-                             "enum entry '%s' has a non-integer initialiser "
-                             "(only plain integers are understood)",
-                             id);
+                buf_tc_pos(tc, lx.p, &l, &c);
+                buf_tc_err_s_at(tc, l, c,
+                                "enum entry '%s' has a non-integer "
+                                "initialiser (only plain integers are "
+                                "understood)",
+                                id);
                 return -1;
             }
             tc->entries[tc->count].has_value = 1;
@@ -204,8 +248,9 @@ static int buf_tc_scan(BufTc *tc) {
         buf_tc_skip(&lx);
         if (lx.p < lx.end && *lx.p == ',') { lx.p++; continue; }
         if (lx.p < lx.end && *lx.p == '}') { lx.p++; break; }
-        buf_tc_err0(tc,
-                    "missing ',' between enum entries in the token header");
+        buf_tc_pos(tc, lx.p, &l, &c);
+        buf_tc_err_at(tc, l, c,
+                      "missing ',' between enum entries in the token header");
         return -1;
     }
     return tc->has_error ? -1 : 0;
@@ -242,33 +287,38 @@ static int buf_tc_compare(BufTc *tc, BufRx *rx) {
     for (i = 0; i < want; i++) {
         buf_tc_expected(exp, rx, i);
         if (i >= tc->count) {
-            buf_tc_err_s(tc, "token header is missing '%s'", exp);
+            buf_tc_err_s_at(tc, tc->end_line, tc->end_col,
+                            "token header is missing '%s'", exp);
             return -1;
         }
         if (strcmp(tc->entries[i].name, exp) != 0) {
-            buf_tc_err_ss(tc, "token header has '%s' where '%s' is expected",
-                          tc->entries[i].name, exp);
+            buf_tc_err_ss_at(tc, tc->entries[i].line, tc->entries[i].col,
+                             "token header has '%s' where '%s' is expected",
+                             tc->entries[i].name, exp);
             return -1;
         }
         if (i == 0 && (!tc->entries[i].has_value || tc->entries[i].value != 0)) {
-            buf_tc_err0(tc, "token header must define TOK_EOF = 0");
+            buf_tc_err_at(tc, tc->entries[i].line, tc->entries[i].col,
+                          "token header must define TOK_EOF = 0");
             return -1;
         }
         if (i == 1 && (!tc->entries[i].has_value || tc->entries[i].value != 1)) {
-            buf_tc_err0(tc, "token header must define TOK_ERROR = 1");
+            buf_tc_err_at(tc, tc->entries[i].line, tc->entries[i].col,
+                          "token header must define TOK_ERROR = 1");
             return -1;
         }
         if (i >= 2 && tc->entries[i].has_value) {
-            buf_tc_err_s(tc,
-                         "token header pins '%s' to an explicit value; "
-                         "%%tokens order must be the only authority",
-                         exp);
+            buf_tc_err_s_at(tc, tc->entries[i].line, tc->entries[i].col,
+                            "token header pins '%s' to an explicit value; "
+                            "%%tokens order must be the only authority",
+                            exp);
             return -1;
         }
     }
     if (tc->count > want) {
-        buf_tc_err_s(tc, "token header has an extra entry '%s' not in %%tokens",
-                     tc->entries[want].name);
+        buf_tc_err_s_at(tc, tc->entries[want].line, tc->entries[want].col,
+                        "token header has an extra entry '%s' not in %%tokens",
+                        tc->entries[want].name);
         return -1;
     }
     return 0;
@@ -278,6 +328,8 @@ static int buf_tc_compare(BufTc *tc, BufRx *rx) {
 
 static void buf_tc_init(BufTc *tc) {
     tc->count     = 0;
+    tc->end_line  = 1;
+    tc->end_col   = 1;
     tc->src_len   = 0;
     tc->path      = "<tokens.h>";
     tc->error[0]  = '\0';

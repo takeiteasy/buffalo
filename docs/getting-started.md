@@ -89,11 +89,12 @@ $ bin/buffalo lex broken.bflo
 buffalo: broken.bflo:3:8: unterminated character class
 ```
 
-and so is a token header that has drifted from the spec:
+and so is a token header that has drifted from the spec (diagnostics carry
+the header path and a 1-based `line:col`):
 
 ```sh
 $ bin/buffalo lex examples/calc.bflo
-buffalo: examples/calc_tokens.h: token header has 'TOK_FLOAT' where 'TOK_INT' is expected
+buffalo: examples/calc_tokens.h:13:5: token header has 'TOK_FLOAT' where 'TOK_INT' is expected
 ```
 
 ### The token header

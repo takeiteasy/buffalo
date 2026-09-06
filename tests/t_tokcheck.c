@@ -140,6 +140,37 @@ int main(void)
         "       TOK_PLUS, TOK_STAR, TOK_LPAREN, TOK_RPAREN };\n",
         "missing ','", "missing comma mid-list reported");
 
+    /* positioned diagnostics: cursor-level errors, entry positions, EOF */
+    check_header(
+        "enum {\n"
+        "  TOK_EOF = 0, TOK_ERROR = 1\n"
+        "  TOK_INT, TOK_FLOAT, TOK_IDENT, TOK_PLUS, TOK_STAR,\n"
+        "  TOK_LPAREN, TOK_RPAREN };\n",
+        "<hdr>:3:3: missing ','", "missing comma reports its line:col");
+
+    check_header(
+        "enum {\n"
+        "  TOK_EOF = 0, TOK_ERROR = 1,\n"
+        "  TOK_FLOAT, TOK_INT, TOK_IDENT, TOK_PLUS, TOK_STAR,\n"
+        "  TOK_LPAREN, TOK_RPAREN };\n",
+        "<hdr>:3:3: token header has 'TOK_FLOAT' where 'TOK_INT' is expected",
+        "misordered entry reports its line:col");
+
+    check_header(
+        "enum {\n"
+        "  TOK_EOF = 0, TOK_ERROR = 1, TOK_INT, TOK_FLOAT, TOK_IDENT,\n"
+        "  TOK_PLUS, TOK_STAR, TOK_LPAREN\n"
+        "};\n",
+        "<hdr>:5:1: token header is missing 'TOK_RPAREN'",
+        "missing kind reports the end-of-file position");
+
+    check_header(
+        "enum {\n"
+        "  TOK_EOF = 7, TOK_ERROR = 1, TOK_INT, TOK_FLOAT, TOK_IDENT,\n"
+        "  TOK_PLUS, TOK_STAR, TOK_LPAREN, TOK_RPAREN };\n",
+        "<hdr>:2:3: token header must define TOK_EOF = 0",
+        "wrong reserved value reports its line:col");
+
     /* no enum at all */
     check_header("#ifndef H\n#define H\n#endif\n",
                  "no `enum", "header without an enum reported");

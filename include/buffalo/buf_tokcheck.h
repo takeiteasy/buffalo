@@ -17,7 +17,9 @@
  *
  * where N0, N1, ... is the spec's %tokens list. Any missing kind, extra
  * kind, misordering, or wrong reserved value is reported with the header
- * path and the offending position.
+ * path, a 1-based line:col, and the offending entry (each enum entry's
+ * position is recorded as it is scanned; cursor-level errors point at the
+ * exact byte).
  *
  * The scanner is deliberately small: it skips `/x ... x/` and `// ...`
  * comments and `#` preprocessor lines, finds the first `enum`, then collects
@@ -43,11 +45,14 @@ typedef struct {
     char name[BUF_RX_NAME_MAX];
     int  has_value;
     long value;
+    int  line, col;   /* of the entry's identifier, 1-based into the header */
 } BufTcEntry;
 
 typedef struct {
     BufTcEntry  entries[BUF_TC_MAX_ENUM];
     int         count;
+
+    int         end_line, end_col;  /* one past the last byte (EOF position) */
 
     char        src[BUF_TC_SRC_MAX];
     int         src_len;

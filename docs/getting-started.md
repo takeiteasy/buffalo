@@ -110,6 +110,28 @@ enum { TOK_EOF = 0, TOK_ERROR = 1, TOK_<N0>, TOK_<N1>, ... };
 where `N0, N1, ...` is the spec's `%tokens` list in order. Any missing kind,
 extra kind, reordering, or explicit value on a non-reserved kind is an error.
 
+Hand-maintaining that enum is optional. `buffalo tokens SPEC.bflo` emits it
+mechanically from the spec's `%tokens` list:
+
+```sh
+$ bin/buffalo tokens examples/calc.bflo
+Token header written to examples/calc_tokens.h
+```
+
+The output path mirrors the derivation above — a trailing `.bflo` replaced
+with `_tokens.h` — overridable with `-o PATH`. The generator is a small
+host-side tool built with a plain `cc` (no cccc); `bin/buffalo` compiles it
+into `build/buf_tokgen` on demand the first time, and the build script's
+`buf_tokgen` target builds the same binary. It requires a spec the reader
+already accepts — every `%tokens` entry needs its rule — so it is a
+post-edit regeneration step, not a way to bootstrap a half-written spec.
+
+This is opt-in and does not replace the default workflow: the checked-in
+headers in `examples/` are hand-written and stay that way, and the comptime
+pass validates a generated header exactly like a hand-written one. Treat a
+generated header as a build artifact — gitignore it next to your `*.gen.c`
+files and regenerate it from the spec (a one-line rule in your build).
+
 ## `bin/buffalo`
 
 `bin/buffalo` is a thin shell wrapper that assembles the `cccc` invocation:
@@ -119,6 +141,7 @@ $ bin/buffalo help
 $ bin/buffalo version
 $ bin/buffalo lex   examples/calc.bflo [-o OUT.gen.c] [--tokens TOK.h]
 $ bin/buffalo parse examples/expr.bflo [-o OUT.parse.gen.c] [--tokens TOK.h]
+$ bin/buffalo tokens examples/calc.bflo [-o TOK.h]
 ```
 
 ## The two build paths

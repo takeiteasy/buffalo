@@ -5,8 +5,9 @@
 # cccc over src/buf_comptime.c with the spec path passed as -D BUF_SPEC.
 # This script just assembles that invocation.
 #
-#   buffalo lex   SPEC.bflo [-o OUT.gen.c] [--tokens TOK.h] [-- <extra cccc args>]
-#   buffalo parse SPEC.bflo [-o OUT.parse.gen.c] [--tokens TOK.h] [-- <extra>]
+#   buffalo lex    SPEC.bflo [-o OUT.gen.c] [--tokens TOK.h] [-- <extra cccc args>]
+#   buffalo parse  SPEC.bflo [-o OUT.parse.gen.c] [--tokens TOK.h] [-- <extra>]
+#   buffalo tokens SPEC.bflo [-o TOK.h]
 #   buffalo version
 #   buffalo help
 #
@@ -43,6 +44,15 @@ commands:
         Default output: SPEC.bflo.parse.gen.c
         The spec must carry a %grammar section; --tokens works as for `lex`.
 
+  tokens SPEC.bflo [-o TOK.h]
+        Opt-in generator: emit a <name>_tokens.h token header from the
+        spec's %tokens list, instead of hand-maintaining one. Default
+        output: SPEC with a trailing ".bflo" replaced by "_tokens.h".
+        The checked-in + validated workflow is unchanged; treat the
+        generated header as a build artifact (gitignore it like *.gen.c).
+        The tool binary (build/buf_tokgen) is plain cc with no cccc
+        dependency, and is built here on demand the first time.
+
   version
   help
 EOF
@@ -56,8 +66,10 @@ cmd_lex() {
     extra=""
     while [ $# -gt 0 ]; do
         case $1 in
-            -o)       out=$2; shift 2 ;;
-            --tokens) tokens=$2; shift 2 ;;
+            -o)       [ $# -ge 2 ] || { echo "buffalo lex: -o needs a path" >&2; exit 2; }
+                      out=$2; shift 2 ;;
+            --tokens) [ $# -ge 2 ] || { echo "buffalo lex: --tokens needs a path" >&2; exit 2; }
+                      tokens=$2; shift 2 ;;
             --)       shift; extra="$*"; break ;;
             *)        echo "buffalo lex: unexpected argument '$1'" >&2; exit 2 ;;
         esac
@@ -95,8 +107,10 @@ cmd_parse() {
     extra=""
     while [ $# -gt 0 ]; do
         case $1 in
-            -o)       out=$2; shift 2 ;;
-            --tokens) tokens=$2; shift 2 ;;
+            -o)       [ $# -ge 2 ] || { echo "buffalo parse: -o needs a path" >&2; exit 2; }
+                      out=$2; shift 2 ;;
+            --tokens) [ $# -ge 2 ] || { echo "buffalo parse: --tokens needs a path" >&2; exit 2; }
+                      tokens=$2; shift 2 ;;
             --)       shift; extra="$*"; break ;;
             *)        echo "buffalo parse: unexpected argument '$1'" >&2; exit 2 ;;
         esac
@@ -126,11 +140,55 @@ cmd_parse() {
     exec "$CCCC" "$@" $extra
 }
 
+cmd_tokens() {
+    [ $# -ge 1 ] || { echo "buffalo tokens: missing SPEC.bflo" >&2; exit 2; }
+    spec=$1; shift
+    out=""
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -o) [ $# -ge 2 ] || { echo "buffalo tokens: -o needs a path" >&2; exit 2; }
+                out=$2; shift 2 ;;
+            *)  echo "buffalo tokens: unexpected argument '$1'" >&2; exit 2 ;;
+        esac
+    done
+
+    if [ ! -f "$spec" ]; then
+        echo "buffalo tokens: no such spec file: $spec" >&2; exit 2
+    fi
+    # Same derivation src/buf_comptime.c applies when BUF_TOKENS_H is absent.
+    if [ -z "$out" ]; then
+        case $spec in
+            *.bflo) out="${spec%.bflo}_tokens.h" ;;
+            *)      out="${spec}_tokens.h" ;;
+        esac
+    fi
+
+    # The generator is a plain-cc host tool: no cccc anywhere. Built on
+    # demand into build/ the first time, so a fresh clone works with zero
+    # setup; the build.c `buf_tokgen` target builds the same binary.
+    tokgen="$here/build/buf_tokgen"
+    if [ ! -x "$tokgen" ]; then
+        for m in "$here/tools/buf_tokgen_main.c" "$here/src/buf_tokgen.c" \
+                 "$here/src/buf_rx.c" "$here/include/buffalo/buf_rx.h"; do
+            [ -f "$m" ] || { echo "buffalo tokens: missing module $m" >&2; exit 3; }
+        done
+        echo "buffalo tokens: building $tokgen (one-time, plain cc)" >&2
+        mkdir -p "$(dirname "$tokgen")"
+        cc -O2 -Wall -I"$here/include/buffalo" -o "$tokgen" \
+            "$here/tools/buf_tokgen_main.c" "$here/src/buf_tokgen.c" \
+            "$here/src/buf_rx.c" \
+            || { echo "buffalo tokens: generator build failed" >&2; exit 3; }
+    fi
+
+    exec "$tokgen" "$spec" -o "$out"
+}
+
 [ $# -ge 1 ] || { usage >&2; exit 2; }
 sub=$1; shift
 case $sub in
     lex)             cmd_lex "$@" ;;
     parse)           cmd_parse "$@" ;;
+    tokens)          cmd_tokens "$@" ;;
     version|--version) echo "buffalo 0.1.0 (lexer + LALR(1) parser generator)" ;;
     help|-h|--help)  usage ;;
     *)               echo "buffalo: unknown command '$sub'" >&2; usage >&2; exit 2 ;;

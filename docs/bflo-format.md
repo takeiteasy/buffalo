@@ -84,6 +84,12 @@ listing the `%tokens` names in order as `TOK_<NAME>`. A missing kind, an extra
 kind, a reordering, a wrong reserved value, or an explicit value pinned on a
 non-reserved kind is an error. `%tokens` is the only authority on order.
 
+The header can also be generated instead of hand-maintained: `buffalo tokens
+SPEC.bflo` writes it straight from the `%tokens` list (see
+[getting-started.md](getting-started.md#the-token-header)). Opt-in — a
+generated header is validated exactly like a checked-in one, so the checker
+stays the arbiter either way.
+
 ### Regex grammar (v1)
 
 | Form | Meaning |

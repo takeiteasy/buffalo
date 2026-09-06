@@ -57,8 +57,9 @@ static const char *CT_HDRS[] = {
 
 // Host unit tests for the comptime headers -- plain cc, no cccc. The last
 // three additionally link the runtime and drive the real buf_run over
-// freshly built tables.
-static const char *PURE_TESTS[] = {"t_rx", "t_tokcheck", "t_nfa"};
+// freshly built tables. t_tokgen also links src/buf_tokgen.c (a host-only
+// module, not part of the comptime set) via the special case below.
+static const char *PURE_TESTS[] = {"t_rx", "t_tokcheck", "t_nfa", "t_tokgen"};
 static const char *RT_TESTS[]   = {"t_dfa", "t_grammar", "t_parse"};
 
 // Inputs a `bin/buffalo` lowering reads besides its own sources -- the same
@@ -97,6 +98,8 @@ int build_main(Builder *ctx) {
         AddSource(t, path);
         for (int s = 0; s < (int)(sizeof(CT_SRC) / sizeof(*CT_SRC)); s++)
             AddSource(t, CT_SRC[s]);
+        if (strcmp(name, "t_tokgen") == 0)
+            AddSource(t, "src/buf_tokgen.c");
         if (with_rt)
             AddSource(t, "runtime/buf_rt.c");
         AddInclude(t, "include/buffalo");
@@ -110,6 +113,30 @@ int build_main(Builder *ctx) {
         DependsOn(r, t);
         DependsOn(check, r);
     }
+
+    // -- buf_tokgen: the opt-in token-header generator behind `buffalo
+    // tokens`. Host-only, plain cc: it links buf_rx for the spec reader but
+    // is not part of the comptime module set (it never enters
+    // src/buf_comptime.c). bin/buffalo also builds it on demand when
+    // missing; declaring it here keeps the smoke check hermetic and the
+    // binary prebuilt for the CLI.
+    BuildTarget *tokgen = Executable(ctx, "buf_tokgen");
+    SetOutput(tokgen, "buf_tokgen");
+    AddSource(tokgen, "tools/buf_tokgen_main.c");
+    AddSource(tokgen, "src/buf_tokgen.c");
+    AddSource(tokgen, "src/buf_rx.c");
+    AddInclude(tokgen, "include/buffalo");
+    AddCFlag(tokgen, "-O2");
+    AddCFlag(tokgen, "-Wall");
+
+    // Smoke-check the CLI end to end: generate calc's header, then prove the
+    // emitted text is a compilable C header.
+    BuildTarget *toksmoke = RunCustom(
+        ctx, "check-tokens-cli",
+        "bin/buffalo tokens examples/calc.bflo -o build/calc_tokens.gen.h && "
+        "cc -fsyntax-only -x c build/calc_tokens.gen.h");
+    DependsOn(toksmoke, tokgen);
+    DependsOn(check, toksmoke);
 
     // -- digits: hand-written reference demo, plain cc, no cccc ------------
     BuildTarget *digits = Executable(ctx, "digits");

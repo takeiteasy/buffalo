@@ -284,6 +284,22 @@ path by replacing a trailing `.bflo` with `_tokens.h` (`calc.bflo` →
 wrapper forwards as `-D BUF_TOKENS_H`). `src/buf_comptime.c` does the
 derivation when `BUF_TOKENS_H` is undefined.
 
+**Hand-typing the header is optional.** `buffalo tokens SPEC.bflo` emits
+`<name>_tokens.h` straight from the spec's `%tokens` list, for callers who
+would rather derive the header than maintain two similar lists by hand. The
+generator is a host-side plain-`cc` tool — `buf_tokgen.{h,c}` renders the
+enum into a text buffer beside `buf_rx`, `tools/buf_tokgen_main.c` writes it
+to disk — and needs no cccc at all, so `bin/buffalo` builds it on demand into
+`build/buf_tokgen` and build.c declares the same binary as a target. It
+cannot bootstrap a half-written spec: `buf_rx` reads and validates the whole
+lexer section first (every `%tokens` entry needs its rule), so the header
+only generates for a spec the reader already accepts — the same point where
+the header is actually needed. This stays opt-in: the checked-in headers in
+`examples/` are hand-written and unchanged, and `buf_tokcheck` keeps its full
+job either way — a generated header is loaded and validated exactly like a
+hand-written one, so `%tokens` remains the only authority on the enum in both
+workflows.
+
 ## The `.bflo` grammar section
 
 The grammar lives in the **same `.bflo` file** as the lexer spec, opened by a

@@ -45,7 +45,7 @@
  * through buf_lalr_plhs/buf_lalr_plen/buf_lalr_psym/buf_lalr_pline/
  * buf_lalr_pcol, which special-case index rx->prod_count as that production.
  *
- * Validation (beyond #21's "used but never defined"): every nonterminal must
+ * Validation (beyond the "used but never defined" check): every nonterminal must
  * be both productive (derives some finite terminal string) and reachable
  * from %start, checked here via two more fixpoints before automaton
  * construction runs at all.

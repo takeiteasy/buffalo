@@ -1,7 +1,7 @@
 /*
- * t_parse.c -- host unit tests for runtime/buf_rt.h's buf_parse (#23), the
+ * t_parse.c -- host unit tests for runtime/buf_rt.h's buf_parse, the
  * runtime LALR(1) driver that builds a concrete syntax tree over the
- * action/goto tables include/buffalo/buf_grammar.h builds (#22).
+ * action/goto tables include/buffalo/buf_grammar.h builds.
  *
  * Plain `cc`, no cccc. Builds tables from a `.bflo` spec's %grammar section
  * the same way tests/t_grammar.c does, bakes the prod_lhs[]/prod_len[]

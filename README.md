@@ -1,7 +1,7 @@
 # buffalo
 
 A lexer and parser generator that runs entirely inside
-[cccc](https://git.sr.ht/~takeiteasy/cccc)'s comptime pass.
+[cccc](https://github.com/takeiteasy/cccc)'s comptime pass.
 
 A spec file is read at compile time, compiled to DFA/parser tables, and lowered
 to plain C. The generated C builds and runs with a stock `cc` — no `cccc`, no

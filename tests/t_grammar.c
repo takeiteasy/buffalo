@@ -5,7 +5,7 @@
  * section and checks them three ways: structural invariants over the raw
  * action/goto tables, a handful of spot-checked entries, and a throwaway
  * ~15-line shift/reduce/accept driver (the t_nfa.c-style independent-walker
- * role) fed calc.bflo's real DFA token stream -- NOT buf_parse/ticket #23's
+ * role) fed calc.bflo's real DFA token stream -- NOT buf_parse's
  * driver, just enough to prove the tables actually recognise the language.
  */
 #include <stdio.h>
@@ -277,7 +277,7 @@ static void test_epsilon_production(void) {
  * Structural signal only (tables build, no conflicts, a plausible state
  * count) -- exercising layered-nonterminal precedence more deeply than
  * calc.bflo's 3 tiers without committing to a full example file + fixtures
- * before ticket #23 has a runtime driver to actually run one against.
+ * before buf_parse has a runtime driver to actually run one against.
  */
 static void test_precedence_ladder(void) {
     if (build_string(
